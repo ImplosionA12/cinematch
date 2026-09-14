@@ -17,7 +17,7 @@ TEAM = [
 ]
 GUIDE = "Dr. VASAVI SANIKOMMU"
 
-results = {r["id"]: r for r in json.load(open(A("results.json"), encoding="utf8"))}
+results = {r["id"]: r for r in json.load(open(A("shell_cmds.json"), encoding="utf8"))}
 
 doc = Document()
 sec = doc.sections[0]
@@ -147,7 +147,7 @@ numbered([
     "To import the MovieLens CSV files into MongoDB as separate collections.",
     "To clean the imported data inside MongoDB (extract the release year, split the genres string into an array and convert timestamps to dates).",
     "To perform basic CRUD operations and queries using filters, projection, sorting, regular expressions and text search.",
-    "To analyse the ratings: rating distribution, most rated movies, highest and lowest rated movies and most controversial movies.",
+    "To analyse the ratings: rating distribution, most rated movies, highest rated movies and most controversial movies.",
     "To analyse genres by joining the ratings and movies collections using $lookup and $unwind.",
     "To analyse users: most active users, harsh and generous users, and rating activity over the years.",
     "To analyse the tags given by users.",
@@ -231,7 +231,7 @@ table(["Collection", "Documents", "Description"], [
     ["ratings", "100,836", "Ratings given by users. Fields: userId, movieId, rating, timestamp, ratedAt"],
     ["tags", "3,683", "Tags given by users. Fields: userId, movieId, tag, timestamp, taggedAt"],
     ["links", "9,742", "IMDb and TMDb ids. Fields: movieId, imdbId, tmdbId"],
-    ["movie_stats", "9,724", "Rating count, average and standard deviation of every movie (created with $merge)"],
+    ["movie_stats", "9,724", "Rating count, average and standard deviation of every movie (created with $merge, used by the web application)"],
 ], widths=[3, 2.2, 10.7])
 para("year, genreList, ratedAt and taggedAt are new fields added by the cleaning queries.", italic=True, size=10)
 
@@ -280,7 +280,7 @@ table(["Collection", "Index", "Purpose"], [
 H("Implementation")
 para("In this project we used MongoDB as the NoSQL database to store and analyse the MovieLens data. The four CSV files were imported into the cinematch database as separate collections using a Node.js import script, which works the same way as mongoimport with the --headerline option. After importing, the collections and sample documents were checked in mongosh.", align="justify")
 para("The imported data was then cleaned inside MongoDB. The release year was taken out of the title using $regexFind, the genres string was split into an array using $split, titles ending with \", The\" were rewritten in the normal order, and the Unix timestamps were converted to dates using $toDate. Indexes were created on the fields used for joining and filtering.", align="justify")
-para("After this, different MongoDB operations were used to analyse the data. Basic find queries with filters, projection, sorting, regular expressions and text search were used to look up movies. Aggregation pipelines with $group, $lookup, $unwind, $sort, $facet, $bucket and date operators were used to analyse ratings, genres, users and tags. Recommendation queries were written using $setIntersection (genre similarity), a $lookup on the fans of a movie (users who liked this also liked) and a weighted rating formula. $merge was used to store the per-movie statistics in a separate collection. Finally, CRUD operations and explain() were used to show insert, update, delete and the use of indexes.", align="justify")
+para("After this, different MongoDB operations were used to analyse the data. Basic find queries with filters, projection, sorting, regular expressions and text search were used to look up movies. Aggregation pipelines with $group, $lookup, $unwind, $sort, $facet, $bucket and date operators were used to analyse ratings, genres, users and tags. Recommendation queries were written using $setIntersection (genre similarity), a $lookup on the fans of a movie (users who liked this also liked) and a weighted rating formula. Finally, explain() was used to show that the queries use the indexes.", align="justify")
 para("All the queries were executed in mongosh and the output of each query is shown as a screenshot in the next section. The same queries are used by the backend of the CineMatch web application, which is shown at the end.", align="justify")
 
 # ───────────────────────── queries ─────────────────────────
@@ -303,39 +303,39 @@ RESULT = {
     16: "34 movies have no genres listed.",
     17: "Drama (4,361) and Comedy (3,756) have the most movies. Film-Noir (87) has the least.",
     18: "The 1990s and 2000s have more than 2,000 movies each. Very few movies are before 1950.",
-    19: "2002 has the most movies (311), followed by 2006 (295) and 2001 (294).",
+    19: "2002 has the most movies (311), followed by 2006 (295), 2001 (294), 2007 (284) and 2000 (283).",
     20: "Comedy|Drama (435), Comedy|Romance (363) and Drama|Romance (349) are the most common genre combinations.",
     21: "The text search returns the Lord of the Rings movies first, with their text score.",
     22: "4.0 is the most common rating (26,818 times), followed by 3.0 and 5.0. Whole star ratings are used more than half star ratings.",
     23: "The overall average rating is 3.50 with a standard deviation of 1.04.",
     24: "Toy Story has 215 ratings with an average of 3.92.",
-    25: "Forrest Gump (329 ratings), The Shawshank Redemption (317) and Pulp Fiction (307) are the most rated movies.",
-    26: "Among movies with at least 100 ratings, The Shawshank Redemption (4.43) has the highest average, followed by The Godfather (4.29) and Fight Club (4.27).",
+    25: "Forrest Gump (329 ratings), The Shawshank Redemption (317), Pulp Fiction (307), The Silence of the Lambs (279) and The Matrix (278) are the most rated movies.",
+    26: "Among movies with at least 100 ratings, The Shawshank Redemption (4.43) has the highest average, followed by The Godfather (4.29), Fight Club (4.27), The Godfather: Part II (4.26) and The Departed (4.25).",
     27: "Godzilla (1998) has the lowest average (1.95), followed by I Know What You Did Last Summer, Wild Wild West and Batman & Robin.",
-    28: "The Blair Witch Project has the highest standard deviation (1.36), which means users strongly disagree about it.",
+    28: "The Blair Witch Project has the highest standard deviation (1.36), followed by First Knight and Austin Powers, which means users strongly disagree about them.",
     29: "The Shawshank Redemption (153), Pulp Fiction (123) and Forrest Gump (116) have the most 5 star ratings.",
     30: "18 movies in the movies collection have no ratings at all.",
-    31: "The weighted rating gives a balanced top 10 in which movies with very few ratings do not appear.",
+    31: "The weighted rating gives a balanced top 5 in which movies with very few ratings do not appear.",
     32: "Film-Noir (3.92), War (3.81) and Documentary (3.80) have the highest average rating. Horror (3.26) has the lowest.",
     33: "Drama (41,928 ratings) and Comedy (39,053) are the most watched genres.",
-    34: "The best rated movie of each genre is shown, for example The Shawshank Redemption for Crime and Drama and Spirited Away for Animation.",
+    34: "The best rated movie of the first five genres is shown, for example Fight Club for Action and Spirited Away for Animation.",
     35: "Drama has more movies than Comedy and Action in every decade. All three genres have the most movies in the 2000s.",
     36: "A movie has 2.27 genres on average and the maximum is 10.",
-    37: "User 414 has given the most ratings (2,698), followed by user 599 (2,478) and user 474 (2,108).",
+    37: "User 414 has given the most ratings (2,698), followed by user 599 (2,478), user 474 (2,108), user 448 (1,864) and user 274 (1,346).",
     38: "User 139 gives the lowest average rating (2.14) and user 452 gives the highest (4.56). Both lists are returned by one $facet query.",
     39: "Most users have between 20 and 99 ratings. Only 12 users have more than 1,000 ratings.",
     40: "User 1 has rated Action, Adventure and Comedy movies the most, and gives the highest average to Drama (4.53).",
     41: "The most ratings were given in the year 2000 (10,061), followed by 2007 and 2015.",
     42: "Monday has the most ratings (17,583) and Thursday has the least (10,706).",
     43: "User 414 gave ratings from June 2000 to June 2018.",
-    44: "'in netflix queue' is the most used tag (131 times), followed by 'atmospheric'.",
+    44: "'in netflix queue' is the most used tag (131 times), followed by 'atmospheric' (41).",
     45: "Pulp Fiction has 173 different tags given by 4 users.",
-    46: "Pulp Fiction (181) and Fight Club (54) are the most tagged movies.",
+    46: "Pulp Fiction (181) and Fight Club (54) are the most tagged movies, followed by 2001: A Space Odyssey, Leon and Eternal Sunshine of the Spotless Mind.",
     47: "The movies tagged as funny are listed with their number of ratings and average rating. Pulp Fiction has the highest average (4.20).",
     48: "User 474 has given 1,507 tags, which is 41% of all the tags.",
     49: "Toy Story 3, Monsters Inc., The Lego Movie, Shrek and Toy Story 2 share all five genres with Toy Story and are recommended.",
-    50: "Out of 150 users who gave The Matrix 4.5 or 5 stars, 75 also gave high ratings to The Shawshank Redemption and Fight Club.",
-    51: "Action and Adventure movies that user 1 has not rated are recommended, such as North by Northwest and City of God.",
+    50: "Out of 150 users who gave The Matrix 4.5 or 5 stars, 75 also gave high ratings to The Shawshank Redemption and Fight Club, and 61 to Pulp Fiction.",
+    51: "Action and Adventure movies that user 1 has not rated are recommended, such as North by Northwest, City of God and The Good, the Bad and the Ugly.",
     52: "Movies with a high average but only 10 to 30 ratings are listed, such as Secrets & Lies (4.59) and Paths of Glory (4.54).",
     53: "Statistics of 9,724 movies were written to the movie_stats collection. The 5 most rated movies are shown.",
     54: "One $facet query returns the overall statistics, top movies, top users and rating distribution together.",
@@ -369,7 +369,7 @@ for gname, qs in groups:
             image(shot, width_cm=width_cm)
         p = para("", after=10)
         p.add_run("Result: ").bold = True
-        p.add_run(RESULT.get(r["id"], ""))
+        p.add_run(RESULT.get(r["origId"], ""))
 
 # ───────────────────────── operators ─────────────────────────
 H("MongoDB Operators Used")
@@ -377,8 +377,7 @@ table(["Operator", "Use in this project"], [
     ["find, findOne, countDocuments, distinct", "Reading documents, counting and unique values"],
     ["$regex, $text", "Pattern matching and text search on titles"],
     ["$all, $in, $ne, $gte, $lte, $size, $expr", "Filtering conditions on fields and arrays"],
-    ["insertOne, updateOne, updateMany, deleteOne", "CRUD operations"],
-    ["$set, $push", "Adding fields and array elements in updates"],
+    ["updateMany with $set", "Adding new fields to existing documents"],
     ["$match", "Filters documents in the pipeline"],
     ["$group with $sum, $avg, $min, $max, $first, $addToSet, $stdDevPop", "Grouping and calculating values"],
     ["$sort, $limit, $count, $project, $addFields", "Sorting, limiting and shaping the output"],
@@ -388,7 +387,6 @@ table(["Operator", "Use in this project"], [
     ["$split, $regexFind, $concat, $toLower, $toInt, $toDate", "String and type conversion"],
     ["$year, $dayOfWeek", "Date parts"],
     ["$setIntersection, $arrayElemAt, $slice", "Array operations"],
-    ["$merge", "Writing pipeline results into a collection"],
     ["createIndex, getIndexes, explain", "Indexing"],
 ], widths=[7.5, 8.4])
 
@@ -409,14 +407,14 @@ for name, cap in [
     ("ui_movie", "Movie page of The Matrix with recommendations"),
     ("ui_genres", "Genre analysis page"),
     ("ui_user", "User profile page of user 414 with recommendations"),
-    ("ui_lab", "Query page running Query 50"),
+    ("ui_lab", "Query page running the collaborative recommendation query"),
 ]:
     w, h = Image.open(A("assets", f"{name}.png")).size
     image(A("assets", f"{name}.png"), width_cm=min(15.9, 21 * w / h), caption=cap)
 
 # ───────────────────────── conclusion ─────────────────────────
 H("Conclusion")
-para("This project helped us understand how MongoDB can be used to store and analyse movie rating data. The MovieLens data was imported into collections, cleaned inside the database and analysed using find queries and aggregation pipelines. We were able to find the most popular and highest rated movies, the average rating of each genre, the most active users, the most used tags and the rating activity over the years. Using $lookup, $unwind, $facet, $bucket and $merge we could answer questions that need data from more than one collection.", align="justify")
+para("This project helped us understand how MongoDB can be used to store and analyse movie rating data. The MovieLens data was imported into collections, cleaned inside the database and analysed using find queries and aggregation pipelines. We were able to find the most popular and highest rated movies, the average rating of each genre, the most active users, the most used tags and the rating activity over the years. Using $lookup, $unwind, $facet and $bucket we could answer questions that need data from more than one collection.", align="justify")
 para("We also learnt how recommendations can be made using only database queries, by comparing genres, by finding the other movies liked by the fans of a movie and by using a weighted rating. Creating indexes and checking the query plan with explain() showed how indexes make the queries faster. Finally, connecting MongoDB to a web application showed how the same queries can be used in a real application.", align="justify")
 
 H("References")

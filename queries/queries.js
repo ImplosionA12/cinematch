@@ -192,7 +192,7 @@ add("Movie Exploration", {
   title: "Find movies released in 1995",
   purpose: "Simple equality filter with projection to hide _id and show only the title and genres.",
   kind: "find", collection: "movies", filter: { year: 1995 },
-  projection: { _id: 0, movieId: 1, title: 1, genres: 1 }, limit: 10,
+  projection: { _id: 0, movieId: 1, title: 1, genres: 1 }, limit: 5,
 });
 
 add("Movie Exploration", {
@@ -206,7 +206,7 @@ add("Movie Exploration", {
   title: "Find movies that are both Comedy and Romance",
   purpose: "$all matches documents whose genreList array contains every listed genre.",
   kind: "find", collection: "movies", filter: { genreList: { $all: ["Comedy", "Romance"] }, year: { $gte: 2015 } },
-  projection: { _id: 0, title: 1, genres: 1 }, limit: 10,
+  projection: { _id: 0, title: 1, genres: 1 }, limit: 5,
 });
 
 add("Movie Exploration", {
@@ -240,14 +240,14 @@ add("Movie Exploration", {
 });
 
 add("Movie Exploration", {
-  title: "Top 10 years with the most movie releases",
+  title: "Top 5 years with the most movie releases",
   kind: "aggregate", collection: "movies",
   purpose: "Group by year, count and rank.",
   pipeline: [
     { $match: { year: { $ne: null } } },
     { $group: { _id: "$year", movies: { $sum: 1 } } },
     { $sort: { movies: -1 } },
-    { $limit: 10 },
+    { $limit: 5 },
   ],
   chart: { type: "bar", x: "_id", y: "movies" },
 });
@@ -260,7 +260,7 @@ add("Movie Exploration", {
     { $match: { genreList: { $not: { $size: 1 } } } },
     { $group: { _id: "$genres", count: { $sum: 1 } } },
     { $sort: { count: -1 } },
-    { $limit: 10 },
+    { $limit: 5 },
   ],
   chart: { type: "bar", x: "_id", y: "count" },
 });
@@ -308,13 +308,13 @@ add("Rating Analysis", {
 });
 
 add("Rating Analysis", {
-  title: "Top 10 most-rated (most popular) movies",
+  title: "Top 5 most-rated (most popular) movies",
   purpose: "Count ratings per movie, then $lookup joins the movies collection to attach the title.",
   kind: "aggregate", collection: "ratings",
   pipeline: [
     { $group: { _id: "$movieId", ratingCount: { $sum: 1 }, avgRating: { $avg: "$rating" } } },
     { $sort: { ratingCount: -1 } },
-    { $limit: 10 },
+    { $limit: 5 },
     { $lookup: { from: "movies", localField: "_id", foreignField: "movieId", as: "movie" } },
     { $unwind: "$movie" },
     { $project: { _id: 0, title: "$movie.title", ratingCount: 1, avgRating: { $round: ["$avgRating", 2] } } },
@@ -323,14 +323,14 @@ add("Rating Analysis", {
 });
 
 add("Rating Analysis", {
-  title: "Top 10 highest-rated movies (minimum 100 ratings)",
+  title: "Top 5 highest-rated movies (minimum 100 ratings)",
   purpose: "A minimum rating count avoids movies rated 5.0 by a single user.",
   kind: "aggregate", collection: "ratings",
   pipeline: [
     { $group: { _id: "$movieId", ratingCount: { $sum: 1 }, avgRating: { $avg: "$rating" } } },
     { $match: { ratingCount: { $gte: 100 } } },
     { $sort: { avgRating: -1 } },
-    { $limit: 10 },
+    { $limit: 5 },
     { $lookup: { from: "movies", localField: "_id", foreignField: "movieId", as: "movie" } },
     { $unwind: "$movie" },
     { $project: { _id: 0, title: "$movie.title", year: "$movie.year", ratingCount: 1, avgRating: { $round: ["$avgRating", 2] } } },
@@ -339,14 +339,14 @@ add("Rating Analysis", {
 });
 
 add("Rating Analysis", {
-  title: "10 lowest-rated movies (minimum 30 ratings)",
+  title: "5 lowest-rated movies (minimum 30 ratings)",
   purpose: "Same pipeline sorted ascending to find widely watched but poorly received films.",
   kind: "aggregate", collection: "ratings",
   pipeline: [
     { $group: { _id: "$movieId", ratingCount: { $sum: 1 }, avgRating: { $avg: "$rating" } } },
     { $match: { ratingCount: { $gte: 30 } } },
     { $sort: { avgRating: 1 } },
-    { $limit: 10 },
+    { $limit: 5 },
     { $lookup: { from: "movies", localField: "_id", foreignField: "movieId", as: "movie" } },
     { $unwind: "$movie" },
     { $project: { _id: 0, title: "$movie.title", ratingCount: 1, avgRating: { $round: ["$avgRating", 2] } } },
@@ -362,7 +362,7 @@ add("Rating Analysis", {
     { $group: { _id: "$movieId", ratingCount: { $sum: 1 }, avgRating: { $avg: "$rating" }, stdDev: { $stdDevPop: "$rating" } } },
     { $match: { ratingCount: { $gte: 50 } } },
     { $sort: { stdDev: -1 } },
-    { $limit: 10 },
+    { $limit: 5 },
     { $lookup: { from: "movies", localField: "_id", foreignField: "movieId", as: "movie" } },
     { $unwind: "$movie" },
     { $project: { _id: 0, title: "$movie.title", ratingCount: 1, avgRating: { $round: ["$avgRating", 2] }, stdDev: { $round: ["$stdDev", 3] } } },
@@ -378,7 +378,7 @@ add("Rating Analysis", {
     { $match: { rating: 5 } },
     { $group: { _id: "$movieId", fiveStars: { $sum: 1 } } },
     { $sort: { fiveStars: -1 } },
-    { $limit: 10 },
+    { $limit: 5 },
     { $lookup: { from: "movies", localField: "_id", foreignField: "movieId", as: "movie" } },
     { $unwind: "$movie" },
     { $project: { _id: 0, title: "$movie.title", fiveStars: 1 } },
@@ -398,7 +398,7 @@ add("Rating Analysis", {
 });
 
 add("Rating Analysis", {
-  title: "Weighted rating (IMDb-style Bayesian formula) – Top 10",
+  title: "Weighted rating (IMDb-style Bayesian formula) – Top 5",
   purpose: "WR = (v/(v+m))·R + (m/(v+m))·C, where v = votes, m = 50 (minimum), R = movie mean, C = global mean 3.5. Balances quality against popularity.",
   kind: "aggregate", collection: "ratings",
   pipeline: [
@@ -406,7 +406,7 @@ add("Rating Analysis", {
     { $match: { v: { $gte: 50 } } },
     { $addFields: { weighted: { $add: [ { $multiply: [{ $divide: ["$v", { $add: ["$v", 50] }] }, "$R"] }, { $multiply: [{ $divide: [50, { $add: ["$v", 50] }] }, 3.5] } ] } } },
     { $sort: { weighted: -1 } },
-    { $limit: 10 },
+    { $limit: 5 },
     { $lookup: { from: "movies", localField: "_id", foreignField: "movieId", as: "movie" } },
     { $unwind: "$movie" },
     { $project: { _id: 0, title: "$movie.title", votes: "$v", avgRating: { $round: ["$R", 2] }, weightedRating: { $round: ["$weighted", 3] } } },
@@ -441,13 +441,13 @@ add("Genre Analysis", {
     { $unwind: "$genreList" },
     { $group: { _id: "$genreList", ratings: { $sum: "$n" } } },
     { $sort: { ratings: -1 } },
-    { $limit: 10 },
+    { $limit: 5 },
   ],
   chart: { type: "pie", x: "_id", y: "ratings" },
 });
 
 add("Genre Analysis", {
-  title: "Best movie in each genre (minimum 50 ratings)",
+  title: "Best movie in each genre (minimum 50 ratings, first 5 genres)",
   purpose: "$sort followed by $group with $first picks the top-rated title per genre.",
   kind: "aggregate", collection: "ratings",
   pipeline: [
@@ -459,6 +459,7 @@ add("Genre Analysis", {
     { $sort: { avgRating: -1 } },
     { $group: { _id: "$movie.genreList", bestMovie: { $first: "$movie.title" }, avgRating: { $first: { $round: ["$avgRating", 2] } }, ratingCount: { $first: "$ratingCount" } } },
     { $sort: { _id: 1 } },
+    { $limit: 5 },
   ],
 });
 
@@ -490,13 +491,13 @@ add("Genre Analysis", {
 /* ───────────────────────── 6. User Analysis ───────────────────────── */
 
 add("User Analysis", {
-  title: "Top 10 most active users",
+  title: "Top 5 most active users",
   purpose: "Users ranked by number of ratings submitted, with each user's average score.",
   kind: "aggregate", collection: "ratings",
   pipeline: [
     { $group: { _id: "$userId", ratings: { $sum: 1 }, avgRating: { $avg: "$rating" } } },
     { $sort: { ratings: -1 } },
-    { $limit: 10 },
+    { $limit: 5 },
     { $project: { userId: "$_id", _id: 0, ratings: 1, avgRating: { $round: ["$avgRating", 2] } } },
   ],
   chart: { type: "bar", x: "userId", y: "ratings" },
@@ -588,7 +589,7 @@ add("Tag Analysis", {
   pipeline: [
     { $group: { _id: { $toLower: "$tag" }, count: { $sum: 1 } } },
     { $sort: { count: -1 } },
-    { $limit: 15 },
+    { $limit: 5 },
   ],
   chart: { type: "hbar", x: "_id", y: "count" },
 });
@@ -612,7 +613,7 @@ add("Tag Analysis", {
   pipeline: [
     { $group: { _id: "$movieId", tagCount: { $sum: 1 } } },
     { $sort: { tagCount: -1 } },
-    { $limit: 10 },
+    { $limit: 5 },
     { $lookup: { from: "movies", localField: "_id", foreignField: "movieId", as: "movie" } },
     { $unwind: "$movie" },
     { $project: { _id: 0, title: "$movie.title", tagCount: 1 } },
@@ -631,7 +632,7 @@ add("Tag Analysis", {
     { $lookup: { from: "movies", localField: "_id", foreignField: "movieId", as: "movie" } },
     { $project: { _id: 0, title: { $first: "$movie.title" }, ratings: { $size: "$r" }, avgRating: { $round: [{ $avg: "$r.rating" }, 2] } } },
     { $sort: { ratings: -1 } },
-    { $limit: 10 },
+    { $limit: 5 },
   ],
 });
 
@@ -662,7 +663,7 @@ add("Recommendation Queries", {
     { $addFields: { ratingCount: { $size: "$r" }, avgRating: { $avg: "$r.rating" } } },
     { $match: { ratingCount: { $gte: 20 } } },
     { $sort: { sharedGenres: -1, avgRating: -1 } },
-    { $limit: 10 },
+    { $limit: 5 },
     { $project: { _id: 0, title: 1, sharedGenres: 1, ratingCount: 1, avgRating: { $round: ["$avgRating", 2] } } },
   ],
   chart: { type: "hbar", x: "title", y: "avgRating" },
@@ -675,7 +676,7 @@ add("Recommendation Queries", {
   pipeline: [
     { $match: { movieId: 2571, rating: { $gte: 4.5 } } },
     { $group: { _id: null, fans: { $addToSet: "$userId" } } },
-    { $lookup: { from: "ratings", let: { fans: "$fans" }, pipeline: [ { $match: { $expr: { $and: [{ $in: ["$userId", "$$fans"] }, { $gte: ["$rating", 4.5] }, { $ne: ["$movieId", 2571] }] } } }, { $group: { _id: "$movieId", fanCount: { $sum: 1 } } }, { $sort: { fanCount: -1 } }, { $limit: 10 } ], as: "alsoLiked" } },
+    { $lookup: { from: "ratings", let: { fans: "$fans" }, pipeline: [ { $match: { $expr: { $and: [{ $in: ["$userId", "$$fans"] }, { $gte: ["$rating", 4.5] }, { $ne: ["$movieId", 2571] }] } } }, { $group: { _id: "$movieId", fanCount: { $sum: 1 } } }, { $sort: { fanCount: -1 } }, { $limit: 5 } ], as: "alsoLiked" } },
     { $unwind: "$alsoLiked" },
     { $lookup: { from: "movies", localField: "alsoLiked._id", foreignField: "movieId", as: "movie" } },
     { $project: { _id: 0, title: { $first: "$movie.title" }, fansWhoLikedIt: "$alsoLiked.fanCount", totalMatrixFans: { $size: "$fans" } } },
@@ -694,7 +695,7 @@ add("Recommendation Queries", {
     { $addFields: { ratingCount: { $size: "$r" }, avgRating: { $avg: "$r.rating" } } },
     { $match: { ratingCount: { $gte: 50 } } },
     { $sort: { avgRating: -1 } },
-    { $limit: 10 },
+    { $limit: 5 },
     { $project: { _id: 0, title: 1, year: 1, ratingCount: 1, avgRating: { $round: ["$avgRating", 2] } } },
   ],
   chart: { type: "hbar", x: "title", y: "avgRating" },
@@ -708,7 +709,7 @@ add("Recommendation Queries", {
     { $group: { _id: "$movieId", ratingCount: { $sum: 1 }, avgRating: { $avg: "$rating" } } },
     { $match: { ratingCount: { $gte: 10, $lte: 30 }, avgRating: { $gte: 4.3 } } },
     { $sort: { avgRating: -1 } },
-    { $limit: 10 },
+    { $limit: 5 },
     { $lookup: { from: "movies", localField: "_id", foreignField: "movieId", as: "movie" } },
     { $unwind: "$movie" },
     { $project: { _id: 0, title: "$movie.title", genres: "$movie.genres", ratingCount: 1, avgRating: { $round: ["$avgRating", 2] } } },

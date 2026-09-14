@@ -14,7 +14,7 @@ for f in sorted(v[1] for v in last.values()):
     im = Image.open(f).convert("RGB")
     a = np.asarray(im)
     # rows that contain something brighter than the console background (ignore title bar + scrollbar column)
-    body = a[40:-4, : a.shape[1] - 24]
+    body = a[40:-12, 8 : a.shape[1] - 24]
     bright = (body.max(axis=2) > 70).any(axis=1)
     rows = np.where(bright)[0]
     if len(rows) == 0:

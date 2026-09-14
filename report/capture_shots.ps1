@@ -1,4 +1,4 @@
-# Opens a real console running mongosh, types each query, and captures the window page by page.
+﻿# Opens a real console running mongosh, types each query, and captures the window page by page.
 # Usage: powershell -ExecutionPolicy Bypass -File report\capture_shots.ps1 [-Only 1,2,3]
 param([int[]]$Only)
 
@@ -65,6 +65,7 @@ function Send-Text($text) {
     if ($line.Length -gt 0) { [System.Windows.Forms.SendKeys]::SendWait((Esc $line)) }
     [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
     Start-Sleep -Milliseconds 60
+    if ($line.TrimEnd().EndsWith(";")) { Start-Sleep -Seconds 15 }   # statement executed: let mongosh finish first
   }
 }
 
@@ -123,3 +124,4 @@ foreach ($c in $cmds) {
 Send-Text "exit"
 Start-Sleep -Seconds 1
 Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+
