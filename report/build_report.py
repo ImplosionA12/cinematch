@@ -359,12 +359,14 @@ for gname, qs in groups:
         para("Query:", bold=True, after=2).paragraph_format.keep_with_next = True
         code(r["shell"])
         para("Output:", bold=True, after=2).paragraph_format.keep_with_next = True
-        shot = A("shots", f"q{r['id']:02d}.png")
-        w, h = Image.open(shot).size
-        width_cm = 15.9
-        if h / w * width_cm > 22.5:
-            width_cm = 22.5 * w / h
-        image(shot, width_cm=width_cm)
+        import glob
+        pages = sorted(glob.glob(A("shots", f"q{r['id']:02d}_*.png")), key=lambda f: int(f.rsplit("_", 1)[1].split(".")[0]))
+        for shot in pages:
+            w, h = Image.open(shot).size
+            width_cm = 15.9
+            if h / w * width_cm > 22.5:
+                width_cm = 22.5 * w / h
+            image(shot, width_cm=width_cm)
         p = para("", after=10)
         p.add_run("Result: ").bold = True
         p.add_run(RESULT.get(r["id"], ""))
