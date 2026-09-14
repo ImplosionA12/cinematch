@@ -1,0 +1,466 @@
+[
+  {
+    "id": 1,
+    "group": "Database Overview",
+    "title": "List all collections in the cinematch database",
+    "purpose": "Verify that the four CSV files were imported as separate collections.",
+    "shell": "db.getCollectionNames()",
+    "output": "[ 'ratings', 'movie_stats', 'movies', 'links', 'tags' ]"
+  },
+  {
+    "id": 2,
+    "group": "Database Overview",
+    "title": "Count documents in every collection",
+    "purpose": "Confirm the row counts match the dataset description (9,742 movies, 100,836 ratings, 3,683 tags, 9,742 links).",
+    "shell": "({\n  movies:  db.movies.countDocuments(),\n  ratings: db.ratings.countDocuments(),\n  tags:    db.tags.countDocuments(),\n  links:   db.links.countDocuments()\n})",
+    "output": "{ movies: 9742, ratings: 100836, tags: 3683, links: 9742 }"
+  },
+  {
+    "id": 3,
+    "group": "Database Overview",
+    "title": "Display a sample movie document",
+    "purpose": "Examine the raw document structure produced by the CSV import (genres is a pipe-delimited string).",
+    "shell": "db.movies.findOne({ movieId: 1 })",
+    "output": "{\n  _id: ObjectId('6aa6fbf4f05594b31fa64e5c'),\n  movieId: 1,\n  title: 'Toy Story (1995)',\n  genres: 'Adventure|Animation|Children|Comedy|Fantasy'\n}"
+  },
+  {
+    "id": 4,
+    "group": "Database Overview",
+    "title": "Display a sample rating document",
+    "purpose": "Ratings reference movies through movieId; timestamp is Unix epoch seconds.",
+    "shell": "db.ratings.findOne({ userId: 1, movieId: 1 })",
+    "output": "{\n  _id: ObjectId('6aa6fbf5f05594b31fa6746a'),\n  userId: 1,\n  movieId: 1,\n  rating: 4,\n  timestamp: 964982703\n}"
+  },
+  {
+    "id": 5,
+    "group": "Database Overview",
+    "title": "Display a sample tag and link document",
+    "purpose": "Tags are free-text labels applied by users; links map movieId to IMDb and TMDb identifiers.",
+    "shell": "[ db.tags.findOne({ movieId: 60756 }), db.links.findOne({ movieId: 1 }) ]",
+    "output": "[\n  {\n    _id: ObjectId('6aa6fbf6f05594b31fa7fe4e'),\n    userId: 2,\n    movieId: 60756,\n    tag: 'funny',\n    timestamp: 1445714994\n  },\n  {\n    _id: ObjectId('6aa6fbf6f05594b31fa80cb1'),\n    movieId: 1,\n    imdbId: '0114709',\n    tmdbId: 862\n  }\n]"
+  },
+  {
+    "id": 6,
+    "group": "Database Overview",
+    "title": "Count the number of distinct users who rated movies",
+    "purpose": "Establish the size of the user base (610 users, each with at least 20 ratings).",
+    "shell": "db.ratings.aggregate([{ $group: { _id: \"$userId\" } }, { $count: \"totalUsers\" }])",
+    "output": "[ { totalUsers: 610 } ]"
+  },
+  {
+    "id": 7,
+    "group": "Data Cleaning & Schema Enrichment",
+    "title": "Extract the release year from the movie title",
+    "purpose": "Titles end with the year in parentheses, e.g. 'Toy Story (1995)'. A pipeline-style update with $regexFind captures it and $toInt stores it as a numeric year field (null when a title has no year).",
+    "shell": "db.movies.updateMany({}, [\n  {\n    $set: {\n      year: {\n        $let: {\n          vars: { m: { $regexFind: { input: \"$title\", regex: /\\((\\d{4})\\)\\s*$/ } } },\n          in: {\n            $cond: [\n              { $eq: [\"$$m\", null] },\n              null,\n              { $toInt: { $arrayElemAt: [\"$$m.captures\", 0] } }\n            ]\n          }\n        }\n      }\n    }\n  }\n])",
+    "output": "{\n  acknowledged: true,\n  insertedId: null,\n  matchedCount: 9742,\n  modifiedCount: 9742,\n  upsertedCount: 0\n}"
+  },
+  {
+    "id": 8,
+    "group": "Data Cleaning & Schema Enrichment",
+    "title": "Split the pipe-delimited genres string into an array",
+    "purpose": "genres: 'Adventure|Animation|Children' becomes genreList: ['Adventure','Animation','Children'] so genres can be queried and unwound individually.",
+    "shell": "db.movies.updateMany({}, [\n  { $set: { genreList: { $split: [\"$genres\", \"|\"] } } }\n])",
+    "output": "{\n  acknowledged: true,\n  insertedId: null,\n  matchedCount: 9742,\n  modifiedCount: 9742,\n  upsertedCount: 0\n}"
+  },
+  {
+    "id": 9,
+    "group": "Data Cleaning & Schema Enrichment",
+    "title": "Convert Unix timestamps into ISODate fields",
+    "purpose": "Epoch seconds are multiplied by 1000 and converted with $toDate so that $year, $month and $dayOfWeek can be used later.",
+    "shell": "db.ratings.updateMany({}, [\n  { $set: { ratedAt: { $toDate: { $multiply: [\"$timestamp\", 1000] } } } }\n]);\ndb.tags.updateMany({}, [\n  { $set: { taggedAt: { $toDate: { $multiply: [\"$timestamp\", 1000] } } } }\n])",
+    "output": "{\n  acknowledged: true,\n  insertedId: null,\n  matchedCount: 3683,\n  modifiedCount: 3683,\n  upsertedCount: 0\n}"
+  },
+  {
+    "id": 10,
+    "group": "Data Cleaning & Schema Enrichment",
+    "title": "Normalise titles that end with a trailing article",
+    "purpose": "MovieLens stores titles as 'Shawshank Redemption, The (1994)'. A $regexFind update moves the trailing article (The/A/An) back to the front so titles read naturally in results.",
+    "shell": "db.movies.updateMany(\n  { title: /, (The|A|An) \\(/ },\n  [\n    {\n      $set: {\n        title: {\n          $let: {\n            vars: { m: { $regexFind: { input: \"$title\", regex: /^(.+), (The|A|An) (\\(.+)$/ } } },\n            in: {\n              $concat: [\n                { $arrayElemAt: [\"$$m.captures\", 1] }, \" \",\n                { $arrayElemAt: [\"$$m.captures\", 0] }, \" \",\n                { $arrayElemAt: [\"$$m.captures\", 2] }\n              ]\n            }\n          }\n        }\n      }\n    }\n  ]\n)",
+    "output": "{\n  acknowledged: true,\n  insertedId: null,\n  matchedCount: 1822,\n  modifiedCount: 1822,\n  upsertedCount: 0\n}"
+  },
+  {
+    "id": 11,
+    "group": "Data Cleaning & Schema Enrichment",
+    "title": "Verify the enriched movie documents",
+    "purpose": "Toy Story now carries year and genreList in addition to the original fields, and movieId 318 reads 'The Shawshank Redemption (1994)' after title normalisation.",
+    "shell": "[ db.movies.findOne({ movieId: 1 }), db.movies.findOne({ movieId: 318 }, { _id: 0, title: 1, year: 1, genreList: 1 }) ]",
+    "output": "[\n  {\n    _id: ObjectId('6aa6fbf4f05594b31fa64e5c'),\n    movieId: 1,\n    title: 'Toy Story (1995)',\n    genres: 'Adventure|Animation|Children|Comedy|Fantasy',\n    year: 1995,\n    genreList: [ 'Adventure', 'Animation', 'Children', 'Comedy', 'Fantasy' ]\n  },\n  {\n    title: 'The Shawshank Redemption (1994)',\n    year: 1994,\n    genreList: [ 'Crime', 'Drama' ]\n  }\n]"
+  },
+  {
+    "id": 12,
+    "group": "Data Cleaning & Schema Enrichment",
+    "title": "Create indexes on frequently queried fields",
+    "purpose": "movieId/userId support $lookup joins, genreList becomes a multikey index, and a text index enables keyword search on titles.",
+    "shell": "db.ratings.createIndex({ movieId: 1 });\ndb.ratings.createIndex({ userId: 1 });\ndb.tags.createIndex({ movieId: 1 });\ndb.movies.createIndex({ movieId: 1 }, { unique: true });\ndb.movies.createIndex({ genreList: 1 });\ndb.movies.createIndex({ year: 1 });\ndb.movies.createIndex({ title: \"text\" });\ndb.movies.getIndexes().map(i => i.name)",
+    "output": "[ '_id_', 'movieId_1', 'genreList_1', 'year_1', 'title_text' ]"
+  },
+  {
+    "id": 13,
+    "group": "Movie Exploration",
+    "title": "Find movies released in 1995",
+    "purpose": "Simple equality filter with projection to hide _id and show only the title and genres.",
+    "shell": "db.movies.find({ year: 1995 }, { _id: 0, movieId: 1, title: 1, genres: 1 }).limit(10)",
+    "output": "[\n  {\n    movieId: 1,\n    title: 'Toy Story (1995)',\n    genres: 'Adventure|Animation|Children|Comedy|Fantasy'\n  },\n  {\n    movieId: 2,\n    title: 'Jumanji (1995)',\n    genres: 'Adventure|Children|Fantasy'\n  },\n  {\n    movieId: 3,\n    title: 'Grumpier Old Men (1995)',\n    genres: 'Comedy|Romance'\n  },\n  {\n    movieId: 4,\n    title: 'Waiting to Exhale (1995)',\n    genres: 'Comedy|Drama|Romance'\n  },\n  {\n    movieId: 5,\n    title: 'Father of the Bride Part II (1995)',\n    genres: 'Comedy'\n  },\n  { movieId: 6, title: 'Heat (1995)', genres: 'Action|Crime|Thriller' },\n  { movieId: 7, title: 'Sabrina (1995)', genres: 'Comedy|Romance' },\n  {\n    movieId: 8,\n    title: 'Tom and Huck (1995)',\n    genres: 'Adventure|Children'\n  },\n  { movieId: 9, title: 'Sudden Death (1995)', genres: 'Action' },\n  {\n    movieId: 10,\n    title: 'GoldenEye (1995)',\n    genres: 'Action|Adventure|Thriller'\n  }\n]"
+  },
+  {
+    "id": 14,
+    "group": "Movie Exploration",
+    "title": "Search movie titles with a regular expression",
+    "purpose": "Case-insensitive pattern matching to find every Star Wars film in the catalogue.",
+    "shell": "db.movies.find({ title: { $regex: \"star wars\", $options: \"i\" } }, { _id: 0, title: 1, year: 1 }).sort({ year: 1 })",
+    "output": "[\n  { title: 'Star Wars: Episode IV - A New Hope (1977)', year: 1977 },\n  { title: 'The Star Wars Holiday Special (1978)', year: 1978 },\n  {\n    title: 'Star Wars: Episode V - The Empire Strikes Back (1980)',\n    year: 1980\n  },\n  {\n    title: 'Star Wars: Episode VI - Return of the Jedi (1983)',\n    year: 1983\n  },\n  {\n    title: 'Star Wars: Episode I - The Phantom Menace (1999)',\n    year: 1999\n  },\n  {\n    title: 'Star Wars: Episode II - Attack of the Clones (2002)',\n    year: 2002\n  },\n  {\n    title: \"Empire of Dreams: The Story of the 'Star Wars' Trilogy (2004)\",\n    year: 2004\n  },\n  {\n    title: 'Star Wars: Episode III - Revenge of the Sith (2005)',\n    year: 2005\n  },\n  { title: 'Star Wars: The Clone Wars (2008)', year: 2008 },\n  {\n    title: 'Star Wars: Episode VII - The Force Awakens (2015)',\n    year: 2015\n  },\n  { title: 'Rogue One: A Star Wars Story (2016)', year: 2016 },\n  { title: 'Star Wars: The Last Jedi (2017)', year: 2017 },\n  { title: 'Solo: A Star Wars Story (2018)', year: 2018 }\n]"
+  },
+  {
+    "id": 15,
+    "group": "Movie Exploration",
+    "title": "Find movies that are both Comedy and Romance",
+    "purpose": "$all matches documents whose genreList array contains every listed genre.",
+    "shell": "db.movies.find({ genreList: { $all: [\"Comedy\", \"Romance\"] }, year: { $gte: 2015 } }, { _id: 0, title: 1, genres: 1 }).limit(10)",
+    "output": "[\n  {\n    title: 'Mortdecai (2015)',\n    genres: 'Adventure|Comedy|Mystery|Romance'\n  },\n  { title: 'Boy Meets Girl (2015)', genres: 'Comedy|Drama|Romance' },\n  { title: 'Focus (2015)', genres: 'Comedy|Crime|Drama|Romance' },\n  { title: 'Man Up (2015)', genres: 'Comedy|Romance' },\n  { title: 'The Lobster (2015)', genres: 'Comedy|Romance|Sci-Fi' },\n  { title: 'Trainwreck (2015)', genres: 'Comedy|Romance' },\n  { title: 'Aloha (2015)', genres: 'Comedy|Drama|Romance' },\n  { title: 'The Escort (2015)', genres: 'Comedy|Romance' },\n  { title: 'Slow Learners (2015)', genres: 'Comedy|Romance' },\n  { title: 'How to Be Single (2016)', genres: 'Comedy|Romance' }\n]"
+  },
+  {
+    "id": 16,
+    "group": "Movie Exploration",
+    "title": "Count movies with no genres listed",
+    "purpose": "Data-quality check: some entries carry the placeholder '(no genres listed)'.",
+    "shell": "db.movies.countDocuments({ genres: \"(no genres listed)\" })",
+    "output": "34"
+  },
+  {
+    "id": 17,
+    "group": "Movie Exploration",
+    "title": "Number of movies per genre",
+    "purpose": "$unwind turns each genre into a separate document so $group can count them.",
+    "shell": "db.movies.aggregate([\n  { $unwind: \"$genreList\" },\n  { $group: { _id: \"$genreList\", movieCount: { $sum: 1 } } },\n  { $sort: { movieCount: -1 } }\n])",
+    "output": "[\n  { _id: 'Drama', movieCount: 4361 },\n  { _id: 'Comedy', movieCount: 3756 },\n  { _id: 'Thriller', movieCount: 1894 },\n  { _id: 'Action', movieCount: 1828 },\n  { _id: 'Romance', movieCount: 1596 },\n  { _id: 'Adventure', movieCount: 1263 },\n  { _id: 'Crime', movieCount: 1199 },\n  { _id: 'Sci-Fi', movieCount: 980 },\n  { _id: 'Horror', movieCount: 978 },\n  { _id: 'Fantasy', movieCount: 779 },\n  { _id: 'Children', movieCount: 664 },\n  { _id: 'Animation', movieCount: 611 },\n  { _id: 'Mystery', movieCount: 573 },\n  { _id: 'Documentary', movieCount: 440 },\n  { _id: 'War', movieCount: 382 },\n  { _id: 'Musical', movieCount: 334 },\n  { _id: 'Western', movieCount: 167 },\n  { _id: 'IMAX', movieCount: 158 },\n  { _id: 'Film-Noir', movieCount: 87 },\n  { _id: '(no genres listed)', movieCount: 34 }\n]"
+  },
+  {
+    "id": 18,
+    "group": "Movie Exploration",
+    "title": "Number of movies released per decade",
+    "purpose": "Bucket movies by decade using arithmetic on the year field.",
+    "shell": "db.movies.aggregate([\n  { $match: { year: { $ne: null } } },\n  {\n    $group: {\n      _id: { $multiply: [{ $floor: { $divide: [\"$year\", 10] } }, 10] },\n      movies: { $sum: 1 }\n    }\n  },\n  { $sort: { _id: 1 } }\n])",
+    "output": "[\n  { _id: 1900, movies: 3 },\n  { _id: 1910, movies: 7 },\n  { _id: 1920, movies: 37 },\n  { _id: 1930, movies: 136 },\n  { _id: 1940, movies: 197 },\n  { _id: 1950, movies: 279 },\n  { _id: 1960, movies: 401 },\n  { _id: 1970, movies: 500 },\n  { _id: 1980, movies: 1177 },\n  { _id: 1990, movies: 2212 },\n  { _id: 2000, movies: 2849 },\n  { _id: 2010, movies: 1931 }\n]"
+  },
+  {
+    "id": 19,
+    "group": "Movie Exploration",
+    "title": "Top 10 years with the most movie releases",
+    "purpose": "Group by year, count and rank.",
+    "shell": "db.movies.aggregate([\n  { $match: { year: { $ne: null } } },\n  { $group: { _id: \"$year\", movies: { $sum: 1 } } },\n  { $sort: { movies: -1 } },\n  { $limit: 10 }\n])",
+    "output": "[\n  { _id: 2002, movies: 311 },\n  { _id: 2006, movies: 295 },\n  { _id: 2001, movies: 294 },\n  { _id: 2007, movies: 284 },\n  { _id: 2000, movies: 283 },\n  { _id: 2009, movies: 282 },\n  { _id: 2004, movies: 279 },\n  { _id: 2003, movies: 279 },\n  { _id: 2014, movies: 278 },\n  { _id: 1996, movies: 276 }\n]"
+  },
+  {
+    "id": 20,
+    "group": "Movie Exploration",
+    "title": "Most common genre combinations",
+    "purpose": "Grouping on the original genres string reveals which multi-genre combinations occur most often.",
+    "shell": "db.movies.aggregate([\n  { $match: { genreList: { $not: { $size: 1 } } } },\n  { $group: { _id: \"$genres\", count: { $sum: 1 } } },\n  { $sort: { count: -1 } },\n  { $limit: 10 }\n])",
+    "output": "[\n  { _id: 'Comedy|Drama', count: 435 },\n  { _id: 'Comedy|Romance', count: 363 },\n  { _id: 'Drama|Romance', count: 349 },\n  { _id: 'Comedy|Drama|Romance', count: 276 },\n  { _id: 'Drama|Thriller', count: 168 },\n  { _id: 'Horror|Thriller', count: 135 },\n  { _id: 'Crime|Drama', count: 134 },\n  { _id: 'Crime|Drama|Thriller', count: 125 },\n  { _id: 'Drama|War', count: 114 },\n  { _id: 'Comedy|Crime', count: 101 }\n]"
+  },
+  {
+    "id": 21,
+    "group": "Movie Exploration",
+    "title": "Full-text search on movie titles",
+    "purpose": "Uses the text index created earlier; $meta returns the relevance score.",
+    "shell": "db.movies.find({ $text: { $search: \"lord rings\" } }, { _id: 0, title: 1, score: { $meta: \"textScore\" } }).sort({ score: { $meta: \"textScore\" } }).limit(5)",
+    "output": "[\n  {\n    title: 'The Lord of the Rings: The Fellowship of the Ring (2001)',\n    score: 1.65\n  },\n  { title: 'The Lord of the Rings (1978)', score: 1.3333333333333333 },\n  {\n    title: 'The Lord of the Rings: The Return of the King (2003)',\n    score: 1.2\n  },\n  { title: 'The Lord of the Rings: The Two Towers (2002)', score: 1.2 },\n  { title: 'The Ring (2002)', score: 0.75 }\n]"
+  },
+  {
+    "id": 22,
+    "group": "Rating Analysis",
+    "title": "Rating distribution (how often each star value is used)",
+    "purpose": "Ratings run from 0.5 to 5.0 in half-star steps; the distribution shows users favour whole stars and 4.0 is the most common value.",
+    "shell": "db.ratings.aggregate([\n  { $group: { _id: \"$rating\", count: { $sum: 1 } } },\n  { $sort: { _id: 1 } }\n])",
+    "output": "[\n  { _id: 0.5, count: 1370 },\n  { _id: 1, count: 2811 },\n  { _id: 1.5, count: 1791 },\n  { _id: 2, count: 7551 },\n  { _id: 2.5, count: 5550 },\n  { _id: 3, count: 20047 },\n  { _id: 3.5, count: 13136 },\n  { _id: 4, count: 26818 },\n  { _id: 4.5, count: 8551 },\n  { _id: 5, count: 13211 }\n]"
+  },
+  {
+    "id": 23,
+    "group": "Rating Analysis",
+    "title": "Overall rating statistics",
+    "purpose": "$avg, $min, $max and $stdDevPop over the entire ratings collection.",
+    "shell": "db.ratings.aggregate([\n  {\n    $group: {\n      _id: null,\n      totalRatings: { $sum: 1 },\n      avgRating: { $avg: \"$rating\" },\n      minRating: { $min: \"$rating\" },\n      maxRating: { $max: \"$rating\" },\n      stdDev: { $stdDevPop: \"$rating\" }\n    }\n  },\n  {\n    $project: {\n      _id: 0,\n      totalRatings: 1,\n      avgRating: { $round: [\"$avgRating\", 3] },\n      minRating: 1,\n      maxRating: 1,\n      stdDev: { $round: [\"$stdDev\", 3] }\n    }\n  }\n])",
+    "output": "[\n  {\n    totalRatings: 100836,\n    minRating: 0.5,\n    maxRating: 5,\n    avgRating: 3.502,\n    stdDev: 1.043\n  }\n]"
+  },
+  {
+    "id": 24,
+    "group": "Rating Analysis",
+    "title": "Average rating of a specific movie (Toy Story)",
+    "purpose": "$match narrows to one movieId before grouping.",
+    "shell": "db.ratings.aggregate([\n  { $match: { movieId: 1 } },\n  {\n    $group: {\n      _id: \"$movieId\",\n      ratings: { $sum: 1 },\n      avgRating: { $avg: \"$rating\" }\n    }\n  }\n])",
+    "output": "[ { _id: 1, ratings: 215, avgRating: 3.9209302325581397 } ]"
+  },
+  {
+    "id": 25,
+    "group": "Rating Analysis",
+    "title": "Top 10 most-rated (most popular) movies",
+    "purpose": "Count ratings per movie, then $lookup joins the movies collection to attach the title.",
+    "shell": "db.ratings.aggregate([\n  {\n    $group: {\n      _id: \"$movieId\",\n      ratingCount: { $sum: 1 },\n      avgRating: { $avg: \"$rating\" }\n    }\n  },\n  { $sort: { ratingCount: -1 } },\n  { $limit: 10 },\n  {\n    $lookup: {\n      from: \"movies\",\n      localField: \"_id\",\n      foreignField: \"movieId\",\n      as: \"movie\"\n    }\n  },\n  { $unwind: \"$movie\" },\n  {\n    $project: {\n      _id: 0,\n      title: \"$movie.title\",\n      ratingCount: 1,\n      avgRating: { $round: [\"$avgRating\", 2] }\n    }\n  }\n])",
+    "output": "[\n  { ratingCount: 329, title: 'Forrest Gump (1994)', avgRating: 4.16 },\n  {\n    ratingCount: 317,\n    title: 'The Shawshank Redemption (1994)',\n    avgRating: 4.43\n  },\n  { ratingCount: 307, title: 'Pulp Fiction (1994)', avgRating: 4.2 },\n  {\n    ratingCount: 279,\n    title: 'The Silence of the Lambs (1991)',\n    avgRating: 4.16\n  },\n  { ratingCount: 278, title: 'The Matrix (1999)', avgRating: 4.19 },\n  {\n    ratingCount: 251,\n    title: 'Star Wars: Episode IV - A New Hope (1977)',\n    avgRating: 4.23\n  },\n  { ratingCount: 238, title: 'Jurassic Park (1993)', avgRating: 3.75 },\n  { ratingCount: 237, title: 'Braveheart (1995)', avgRating: 4.03 },\n  {\n    ratingCount: 224,\n    title: 'Terminator 2: Judgment Day (1991)',\n    avgRating: 3.97\n  },\n  {\n    ratingCount: 220,\n    title: \"Schindler's List (1993)\",\n    avgRating: 4.22\n  }\n]"
+  },
+  {
+    "id": 26,
+    "group": "Rating Analysis",
+    "title": "Top 10 highest-rated movies (minimum 100 ratings)",
+    "purpose": "A minimum rating count avoids movies rated 5.0 by a single user.",
+    "shell": "db.ratings.aggregate([\n  {\n    $group: {\n      _id: \"$movieId\",\n      ratingCount: { $sum: 1 },\n      avgRating: { $avg: \"$rating\" }\n    }\n  },\n  { $match: { ratingCount: { $gte: 100 } } },\n  { $sort: { avgRating: -1 } },\n  { $limit: 10 },\n  {\n    $lookup: {\n      from: \"movies\",\n      localField: \"_id\",\n      foreignField: \"movieId\",\n      as: \"movie\"\n    }\n  },\n  { $unwind: \"$movie\" },\n  {\n    $project: {\n      _id: 0,\n      title: \"$movie.title\",\n      year: \"$movie.year\",\n      ratingCount: 1,\n      avgRating: { $round: [\"$avgRating\", 2] }\n    }\n  }\n])",
+    "output": "[\n  {\n    ratingCount: 317,\n    title: 'The Shawshank Redemption (1994)',\n    year: 1994,\n    avgRating: 4.43\n  },\n  {\n    ratingCount: 192,\n    title: 'The Godfather (1972)',\n    year: 1972,\n    avgRating: 4.29\n  },\n  {\n    ratingCount: 218,\n    title: 'Fight Club (1999)',\n    year: 1999,\n    avgRating: 4.27\n  },\n  {\n    ratingCount: 129,\n    title: 'The Godfather: Part II (1974)',\n    year: 1974,\n    avgRating: 4.26\n  },\n  {\n    ratingCount: 107,\n    title: 'The Departed (2006)',\n    year: 2006,\n    avgRating: 4.25\n  },\n  {\n    ratingCount: 126,\n    title: 'Goodfellas (1990)',\n    year: 1990,\n    avgRating: 4.25\n  },\n  {\n    ratingCount: 100,\n    title: 'Casablanca (1942)',\n    year: 1942,\n    avgRating: 4.24\n  },\n  {\n    ratingCount: 149,\n    title: 'The Dark Knight (2008)',\n    year: 2008,\n    avgRating: 4.24\n  },\n  {\n    ratingCount: 204,\n    title: 'The Usual Suspects (1995)',\n    year: 1995,\n    avgRating: 4.24\n  },\n  {\n    ratingCount: 142,\n    title: 'The Princess Bride (1987)',\n    year: 1987,\n    avgRating: 4.23\n  }\n]"
+  },
+  {
+    "id": 27,
+    "group": "Rating Analysis",
+    "title": "10 lowest-rated movies (minimum 30 ratings)",
+    "purpose": "Same pipeline sorted ascending to find widely watched but poorly received films.",
+    "shell": "db.ratings.aggregate([\n  {\n    $group: {\n      _id: \"$movieId\",\n      ratingCount: { $sum: 1 },\n      avgRating: { $avg: \"$rating\" }\n    }\n  },\n  { $match: { ratingCount: { $gte: 30 } } },\n  { $sort: { avgRating: 1 } },\n  { $limit: 10 },\n  {\n    $lookup: {\n      from: \"movies\",\n      localField: \"_id\",\n      foreignField: \"movieId\",\n      as: \"movie\"\n    }\n  },\n  { $unwind: \"$movie\" },\n  {\n    $project: {\n      _id: 0,\n      title: \"$movie.title\",\n      ratingCount: 1,\n      avgRating: { $round: [\"$avgRating\", 2] }\n    }\n  }\n])",
+    "output": "[\n  { ratingCount: 33, title: 'Godzilla (1998)', avgRating: 1.95 },\n  {\n    ratingCount: 32,\n    title: 'I Know What You Did Last Summer (1997)',\n    avgRating: 2.11\n  },\n  { ratingCount: 53, title: 'Wild Wild West (1999)', avgRating: 2.21 },\n  { ratingCount: 42, title: 'Batman & Robin (1997)', avgRating: 2.21 },\n  { ratingCount: 39, title: 'Hollow Man (2000)', avgRating: 2.29 },\n  { ratingCount: 42, title: 'The Flintstones (1994)', avgRating: 2.36 },\n  { ratingCount: 37, title: 'Free Willy (1993)', avgRating: 2.39 },\n  { ratingCount: 41, title: 'Striptease (1996)', avgRating: 2.41 },\n  { ratingCount: 63, title: 'Coneheads (1993)', avgRating: 2.42 },\n  { ratingCount: 35, title: 'Showgirls (1995)', avgRating: 2.47 }\n]"
+  },
+  {
+    "id": 28,
+    "group": "Rating Analysis",
+    "title": "Most controversial movies (highest rating variance)",
+    "purpose": "$stdDevPop measures disagreement between users; a high value means the audience is split between loving and hating the film.",
+    "shell": "db.ratings.aggregate([\n  {\n    $group: {\n      _id: \"$movieId\",\n      ratingCount: { $sum: 1 },\n      avgRating: { $avg: \"$rating\" },\n      stdDev: { $stdDevPop: \"$rating\" }\n    }\n  },\n  { $match: { ratingCount: { $gte: 50 } } },\n  { $sort: { stdDev: -1 } },\n  { $limit: 10 },\n  {\n    $lookup: {\n      from: \"movies\",\n      localField: \"_id\",\n      foreignField: \"movieId\",\n      as: \"movie\"\n    }\n  },\n  { $unwind: \"$movie\" },\n  {\n    $project: {\n      _id: 0,\n      title: \"$movie.title\",\n      ratingCount: 1,\n      avgRating: { $round: [\"$avgRating\", 2] },\n      stdDev: { $round: [\"$stdDev\", 3] }\n    }\n  }\n])",
+    "output": "[\n  {\n    ratingCount: 64,\n    title: 'The Blair Witch Project (1999)',\n    avgRating: 2.8,\n    stdDev: 1.363\n  },\n  {\n    ratingCount: 54,\n    title: 'First Knight (1995)',\n    avgRating: 3.08,\n    stdDev: 1.287\n  },\n  {\n    ratingCount: 121,\n    title: 'Austin Powers: The Spy Who Shagged Me (1999)',\n    avgRating: 3.2,\n    stdDev: 1.21\n  },\n  {\n    ratingCount: 70,\n    title: 'Scream (1996)',\n    avgRating: 3.2,\n    stdDev: 1.187\n  },\n  {\n    ratingCount: 55,\n    title: 'Moulin Rouge (2001)',\n    avgRating: 3.59,\n    stdDev: 1.187\n  },\n  {\n    ratingCount: 86,\n    title: 'Mars Attacks! (1996)',\n    avgRating: 3.09,\n    stdDev: 1.173\n  },\n  {\n    ratingCount: 82,\n    title: 'The Nutty Professor (1996)',\n    avgRating: 2.73,\n    stdDev: 1.167\n  },\n  {\n    ratingCount: 54,\n    title: 'The Cable Guy (1996)',\n    avgRating: 2.81,\n    stdDev: 1.164\n  },\n  {\n    ratingCount: 50,\n    title: 'Scary Movie (2000)',\n    avgRating: 2.92,\n    stdDev: 1.159\n  },\n  {\n    ratingCount: 56,\n    title: 'Rushmore (1998)',\n    avgRating: 3.54,\n    stdDev: 1.147\n  }\n]"
+  },
+  {
+    "id": 29,
+    "group": "Rating Analysis",
+    "title": "Movies with the most 5-star ratings",
+    "purpose": "Filter to perfect scores first, then count per movie.",
+    "shell": "db.ratings.aggregate([\n  { $match: { rating: 5 } },\n  { $group: { _id: \"$movieId\", fiveStars: { $sum: 1 } } },\n  { $sort: { fiveStars: -1 } },\n  { $limit: 10 },\n  {\n    $lookup: {\n      from: \"movies\",\n      localField: \"_id\",\n      foreignField: \"movieId\",\n      as: \"movie\"\n    }\n  },\n  { $unwind: \"$movie\" },\n  { $project: { _id: 0, title: \"$movie.title\", fiveStars: 1 } }\n])",
+    "output": "[\n  { fiveStars: 153, title: 'The Shawshank Redemption (1994)' },\n  { fiveStars: 123, title: 'Pulp Fiction (1994)' },\n  { fiveStars: 116, title: 'Forrest Gump (1994)' },\n  { fiveStars: 109, title: 'The Matrix (1999)' },\n  {\n    fiveStars: 104,\n    title: 'Star Wars: Episode IV - A New Hope (1977)'\n  },\n  { fiveStars: 92, title: 'The Silence of the Lambs (1991)' },\n  { fiveStars: 92, title: \"Schindler's List (1993)\" },\n  { fiveStars: 88, title: 'The Godfather (1972)' },\n  { fiveStars: 81, title: 'Fight Club (1999)' },\n  { fiveStars: 80, title: 'Braveheart (1995)' }\n]"
+  },
+  {
+    "id": 30,
+    "group": "Rating Analysis",
+    "title": "Movies that have never been rated",
+    "purpose": "A $lookup from movies to ratings followed by $match on an empty array finds catalogue entries with zero ratings (an anti-join).",
+    "shell": "db.movies.aggregate([\n  {\n    $lookup: {\n      from: \"ratings\",\n      localField: \"movieId\",\n      foreignField: \"movieId\",\n      as: \"r\"\n    }\n  },\n  { $match: { r: { $size: 0 } } },\n  { $count: \"unratedMovies\" }\n])",
+    "output": "[ { unratedMovies: 18 } ]"
+  },
+  {
+    "id": 31,
+    "group": "Rating Analysis",
+    "title": "Weighted rating (IMDb-style Bayesian formula) – Top 10",
+    "purpose": "WR = (v/(v+m))·R + (m/(v+m))·C, where v = votes, m = 50 (minimum), R = movie mean, C = global mean 3.5. Balances quality against popularity.",
+    "shell": "db.ratings.aggregate([\n  {\n    $group: { _id: \"$movieId\", v: { $sum: 1 }, R: { $avg: \"$rating\" } }\n  },\n  { $match: { v: { $gte: 50 } } },\n  {\n    $addFields: {\n      weighted: {\n        $add: [\n          {\n            $multiply: [{ $divide: [\"$v\", { $add: [\"$v\", 50] }] }, \"$R\"]\n          },\n          {\n            $multiply: [{ $divide: [50, { $add: [\"$v\", 50] }] }, 3.5]\n          }\n        ]\n      }\n    }\n  },\n  { $sort: { weighted: -1 } },\n  { $limit: 10 },\n  {\n    $lookup: {\n      from: \"movies\",\n      localField: \"_id\",\n      foreignField: \"movieId\",\n      as: \"movie\"\n    }\n  },\n  { $unwind: \"$movie\" },\n  {\n    $project: {\n      _id: 0,\n      title: \"$movie.title\",\n      votes: \"$v\",\n      avgRating: { $round: [\"$R\", 2] },\n      weightedRating: { $round: [\"$weighted\", 3] }\n    }\n  }\n])",
+    "output": "[\n  {\n    title: 'The Shawshank Redemption (1994)',\n    votes: 317,\n    avgRating: 4.43,\n    weightedRating: 4.302\n  },\n  {\n    title: 'Fight Club (1999)',\n    votes: 218,\n    avgRating: 4.27,\n    weightedRating: 4.129\n  },\n  {\n    title: 'The Godfather (1972)',\n    votes: 192,\n    avgRating: 4.29,\n    weightedRating: 4.126\n  },\n  {\n    title: 'Star Wars: Episode IV - A New Hope (1977)',\n    votes: 251,\n    avgRating: 4.23,\n    weightedRating: 4.11\n  },\n  {\n    title: 'Pulp Fiction (1994)',\n    votes: 307,\n    avgRating: 4.2,\n    weightedRating: 4.099\n  },\n  {\n    title: 'The Usual Suspects (1995)',\n    votes: 204,\n    avgRating: 4.24,\n    weightedRating: 4.093\n  },\n  {\n    title: \"Schindler's List (1993)\",\n    votes: 220,\n    avgRating: 4.22,\n    weightedRating: 4.091\n  },\n  {\n    title: 'The Matrix (1999)',\n    votes: 278,\n    avgRating: 4.19,\n    weightedRating: 4.087\n  },\n  {\n    title: 'Star Wars: Episode V - The Empire Strikes Back (1980)',\n    votes: 211,\n    avgRating: 4.22,\n    weightedRating: 4.079\n  },\n  {\n    title: 'Forrest Gump (1994)',\n    votes: 329,\n    avgRating: 4.16,\n    weightedRating: 4.077\n  }\n]"
+  },
+  {
+    "id": 32,
+    "group": "Genre Analysis",
+    "title": "Average rating per genre",
+    "purpose": "Join every movie to its ratings, unwind both arrays, and compute the mean rating and rating volume of each genre.",
+    "shell": "db.movies.aggregate([\n  {\n    $lookup: {\n      from: \"ratings\",\n      localField: \"movieId\",\n      foreignField: \"movieId\",\n      as: \"r\"\n    }\n  },\n  { $unwind: \"$r\" },\n  { $unwind: \"$genreList\" },\n  {\n    $group: {\n      _id: \"$genreList\",\n      avgRating: { $avg: \"$r.rating\" },\n      ratings: { $sum: 1 }\n    }\n  },\n  {\n    $project: { avgRating: { $round: [\"$avgRating\", 3] }, ratings: 1 }\n  },\n  { $sort: { avgRating: -1 } }\n])",
+    "output": "[\n  { _id: 'Film-Noir', ratings: 870, avgRating: 3.92 },\n  { _id: 'War', ratings: 4859, avgRating: 3.808 },\n  { _id: 'Documentary', ratings: 1219, avgRating: 3.798 },\n  { _id: 'Crime', ratings: 16681, avgRating: 3.658 },\n  { _id: 'Drama', ratings: 41928, avgRating: 3.656 },\n  { _id: 'Mystery', ratings: 7674, avgRating: 3.632 },\n  { _id: 'Animation', ratings: 6988, avgRating: 3.63 },\n  { _id: 'IMAX', ratings: 4145, avgRating: 3.618 },\n  { _id: 'Western', ratings: 1930, avgRating: 3.584 },\n  { _id: 'Musical', ratings: 4138, avgRating: 3.564 },\n  { _id: 'Adventure', ratings: 24161, avgRating: 3.509 },\n  { _id: 'Romance', ratings: 18124, avgRating: 3.507 },\n  { _id: 'Thriller', ratings: 26452, avgRating: 3.494 },\n  { _id: 'Fantasy', ratings: 11834, avgRating: 3.491 },\n  { _id: '(no genres listed)', ratings: 47, avgRating: 3.489 },\n  { _id: 'Sci-Fi', ratings: 17243, avgRating: 3.456 },\n  { _id: 'Action', ratings: 30635, avgRating: 3.448 },\n  { _id: 'Children', ratings: 9208, avgRating: 3.413 },\n  { _id: 'Comedy', ratings: 39053, avgRating: 3.385 },\n  { _id: 'Horror', ratings: 7291, avgRating: 3.258 }\n]"
+  },
+  {
+    "id": 33,
+    "group": "Genre Analysis",
+    "title": "Most popular genres by number of ratings",
+    "purpose": "$size of the joined ratings array is summed per genre – shows what people actually watch rather than what they rate highly.",
+    "shell": "db.movies.aggregate([\n  {\n    $lookup: {\n      from: \"ratings\",\n      localField: \"movieId\",\n      foreignField: \"movieId\",\n      as: \"r\"\n    }\n  },\n  { $project: { genreList: 1, n: { $size: \"$r\" } } },\n  { $unwind: \"$genreList\" },\n  { $group: { _id: \"$genreList\", ratings: { $sum: \"$n\" } } },\n  { $sort: { ratings: -1 } },\n  { $limit: 10 }\n])",
+    "output": "[\n  { _id: 'Drama', ratings: 41928 },\n  { _id: 'Comedy', ratings: 39053 },\n  { _id: 'Action', ratings: 30635 },\n  { _id: 'Thriller', ratings: 26452 },\n  { _id: 'Adventure', ratings: 24161 },\n  { _id: 'Romance', ratings: 18124 },\n  { _id: 'Sci-Fi', ratings: 17243 },\n  { _id: 'Crime', ratings: 16681 },\n  { _id: 'Fantasy', ratings: 11834 },\n  { _id: 'Children', ratings: 9208 }\n]"
+  },
+  {
+    "id": 34,
+    "group": "Genre Analysis",
+    "title": "Best movie in each genre (minimum 50 ratings)",
+    "purpose": "$sort followed by $group with $first picks the top-rated title per genre.",
+    "shell": "db.ratings.aggregate([\n  {\n    $group: {\n      _id: \"$movieId\",\n      ratingCount: { $sum: 1 },\n      avgRating: { $avg: \"$rating\" }\n    }\n  },\n  { $match: { ratingCount: { $gte: 50 } } },\n  {\n    $lookup: {\n      from: \"movies\",\n      localField: \"_id\",\n      foreignField: \"movieId\",\n      as: \"movie\"\n    }\n  },\n  { $unwind: \"$movie\" },\n  { $unwind: \"$movie.genreList\" },\n  { $sort: { avgRating: -1 } },\n  {\n    $group: {\n      _id: \"$movie.genreList\",\n      bestMovie: { $first: \"$movie.title\" },\n      avgRating: { $first: { $round: [\"$avgRating\", 2] } },\n      ratingCount: { $first: \"$ratingCount\" }\n    }\n  },\n  { $sort: { _id: 1 } }\n])",
+    "output": "[\n  {\n    _id: 'Action',\n    bestMovie: 'Fight Club (1999)',\n    avgRating: 4.27,\n    ratingCount: 218\n  },\n  {\n    _id: 'Adventure',\n    bestMovie: 'The Princess Bride (1987)',\n    avgRating: 4.23,\n    ratingCount: 142\n  },\n  {\n    _id: 'Animation',\n    bestMovie: 'Spirited Away (Sen to Chihiro no kamikakushi) (2001)',\n    avgRating: 4.16,\n    ratingCount: 87\n  },\n  {\n    _id: 'Children',\n    bestMovie: 'Toy Story 3 (2010)',\n    avgRating: 4.11,\n    ratingCount: 55\n  },\n  {\n    _id: 'Comedy',\n    bestMovie: 'Dr. Strangelove or: How I Learned to Stop Worrying and Love the Bomb (1964)',\n    avgRating: 4.27,\n    ratingCount: 97\n  },\n  {\n    _id: 'Crime',\n    bestMovie: 'The Shawshank Redemption (1994)',\n    avgRating: 4.43,\n    ratingCount: 317\n  },\n  {\n    _id: 'Documentary',\n    bestMovie: 'Bowling for Columbine (2002)',\n    avgRating: 3.78,\n    ratingCount: 58\n  },\n  {\n    _id: 'Drama',\n    bestMovie: 'The Shawshank Redemption (1994)',\n    avgRating: 4.43,\n    ratingCount: 317\n  },\n  {\n    _id: 'Fantasy',\n    bestMovie: 'The Princess Bride (1987)',\n    avgRating: 4.23,\n    ratingCount: 142\n  },\n  {\n    _id: 'Film-Noir',\n    bestMovie: 'Chinatown (1974)',\n    avgRating: 4.21,\n    ratingCount: 59\n  },\n  {\n    _id: 'Horror',\n    bestMovie: 'The Silence of the Lambs (1991)',\n    avgRating: 4.16,\n    ratingCount: 279\n  },\n  {\n    _id: 'IMAX',\n    bestMovie: 'The Dark Knight (2008)',\n    avgRating: 4.24,\n    ratingCount: 149\n  },\n  {\n    _id: 'Musical',\n    bestMovie: 'The Lion King (1994)',\n    avgRating: 3.94,\n    ratingCount: 172\n  },\n  {\n    _id: 'Mystery',\n    bestMovie: 'Rear Window (1954)',\n    avgRating: 4.26,\n    ratingCount: 84\n  },\n  {\n    _id: 'Romance',\n    bestMovie: 'Casablanca (1942)',\n    avgRating: 4.24,\n    ratingCount: 100\n  },\n  {\n    _id: 'Sci-Fi',\n    bestMovie: 'Star Wars: Episode IV - A New Hope (1977)',\n    avgRating: 4.23,\n    ratingCount: 251\n  },\n  {\n    _id: 'Thriller',\n    bestMovie: 'Fight Club (1999)',\n    avgRating: 4.27,\n    ratingCount: 218\n  },\n  {\n    _id: 'War',\n    bestMovie: 'Dr. Strangelove or: How I Learned to Stop Worrying and Love the Bomb (1964)',\n    avgRating: 4.27,\n    ratingCount: 97\n  },\n  {\n    _id: 'Western',\n    bestMovie: 'The Good, the Bad and the Ugly (Buono, il brutto, il cattivo, Il) (1966)',\n    avgRating: 4.15,\n    ratingCount: 72\n  }\n]"
+  },
+  {
+    "id": 35,
+    "group": "Genre Analysis",
+    "title": "Genre popularity by decade (Action vs Drama vs Comedy)",
+    "purpose": "Two-level grouping (decade + genre) to see how the catalogue mix changed over time.",
+    "shell": "db.movies.aggregate([\n  {\n    $match: {\n      year: { $gte: 1970 },\n      genreList: { $in: [\"Action\", \"Drama\", \"Comedy\"] }\n    }\n  },\n  { $unwind: \"$genreList\" },\n  { $match: { genreList: { $in: [\"Action\", \"Drama\", \"Comedy\"] } } },\n  {\n    $group: {\n      _id: {\n        decade: { $multiply: [{ $floor: { $divide: [\"$year\", 10] } }, 10] },\n        genre: \"$genreList\"\n      },\n      movies: { $sum: 1 }\n    }\n  },\n  { $sort: { \"_id.decade\": 1, \"_id.genre\": 1 } }\n])",
+    "output": "[\n  { _id: { decade: 1970, genre: 'Action' }, movies: 103 },\n  { _id: { decade: 1970, genre: 'Comedy' }, movies: 155 },\n  { _id: { decade: 1970, genre: 'Drama' }, movies: 225 },\n  { _id: { decade: 1980, genre: 'Action' }, movies: 227 },\n  { _id: { decade: 1980, genre: 'Comedy' }, movies: 492 },\n  { _id: { decade: 1980, genre: 'Drama' }, movies: 439 },\n  { _id: { decade: 1990, genre: 'Action' }, movies: 392 },\n  { _id: { decade: 1990, genre: 'Comedy' }, movies: 890 },\n  { _id: { decade: 1990, genre: 'Drama' }, movies: 1038 },\n  { _id: { decade: 2000, genre: 'Action' }, movies: 549 },\n  { _id: { decade: 2000, genre: 'Comedy' }, movies: 1135 },\n  { _id: { decade: 2000, genre: 'Drama' }, movies: 1365 },\n  { _id: { decade: 2010, genre: 'Action' }, movies: 464 },\n  { _id: { decade: 2010, genre: 'Comedy' }, movies: 758 },\n  { _id: { decade: 2010, genre: 'Drama' }, movies: 743 }\n]"
+  },
+  {
+    "id": 36,
+    "group": "Genre Analysis",
+    "title": "Average number of genres per movie",
+    "purpose": "$size on the genreList array, averaged across the catalogue.",
+    "shell": "db.movies.aggregate([\n  { $project: { genreCount: { $size: \"$genreList\" } } },\n  {\n    $group: {\n      _id: null,\n      avgGenres: { $avg: \"$genreCount\" },\n      maxGenres: { $max: \"$genreCount\" }\n    }\n  },\n  {\n    $project: {\n      _id: 0,\n      avgGenres: { $round: [\"$avgGenres\", 2] },\n      maxGenres: 1\n    }\n  }\n])",
+    "output": "[ { maxGenres: 10, avgGenres: 2.27 } ]"
+  },
+  {
+    "id": 37,
+    "group": "User Analysis",
+    "title": "Top 10 most active users",
+    "purpose": "Users ranked by number of ratings submitted, with each user's average score.",
+    "shell": "db.ratings.aggregate([\n  {\n    $group: {\n      _id: \"$userId\",\n      ratings: { $sum: 1 },\n      avgRating: { $avg: \"$rating\" }\n    }\n  },\n  { $sort: { ratings: -1 } },\n  { $limit: 10 },\n  {\n    $project: {\n      userId: \"$_id\",\n      _id: 0,\n      ratings: 1,\n      avgRating: { $round: [\"$avgRating\", 2] }\n    }\n  }\n])",
+    "output": "[\n  { ratings: 2698, userId: 414, avgRating: 3.39 },\n  { ratings: 2478, userId: 599, avgRating: 2.64 },\n  { ratings: 2108, userId: 474, avgRating: 3.4 },\n  { ratings: 1864, userId: 448, avgRating: 2.85 },\n  { ratings: 1346, userId: 274, avgRating: 3.24 },\n  { ratings: 1302, userId: 610, avgRating: 3.69 },\n  { ratings: 1260, userId: 68, avgRating: 3.23 },\n  { ratings: 1218, userId: 380, avgRating: 3.67 },\n  { ratings: 1115, userId: 606, avgRating: 3.66 },\n  { ratings: 1055, userId: 288, avgRating: 3.15 }\n]"
+  },
+  {
+    "id": 38,
+    "group": "User Analysis",
+    "title": "Harshest and most generous critics (minimum 100 ratings)",
+    "purpose": "$facet runs two sub-pipelines in one query: lowest and highest average scorers.",
+    "shell": "db.ratings.aggregate([\n  {\n    $group: {\n      _id: \"$userId\",\n      ratings: { $sum: 1 },\n      avgRating: { $avg: \"$rating\" }\n    }\n  },\n  { $match: { ratings: { $gte: 100 } } },\n  {\n    $project: {\n      userId: \"$_id\",\n      _id: 0,\n      ratings: 1,\n      avgRating: { $round: [\"$avgRating\", 2] }\n    }\n  },\n  {\n    $facet: {\n      harshest: [{ $sort: { avgRating: 1 } }, { $limit: 5 }],\n      mostGenerous: [{ $sort: { avgRating: -1 } }, { $limit: 5 }]\n    }\n  }\n])",
+    "output": "[\n  {\n    harshest: [\n      { ratings: 194, userId: 139, avgRating: 2.14 },\n      { ratings: 179, userId: 153, avgRating: 2.22 },\n      { ratings: 385, userId: 567, avgRating: 2.25 },\n      { ratings: 939, userId: 298, avgRating: 2.36 },\n      { ratings: 400, userId: 517, avgRating: 2.39 }\n    ],\n    mostGenerous: [\n      { ratings: 202, userId: 452, avgRating: 4.56 },\n      { ratings: 292, userId: 122, avgRating: 4.55 },\n      { ratings: 114, userId: 43, avgRating: 4.55 },\n      { ratings: 130, userId: 52, avgRating: 4.48 },\n      { ratings: 101, userId: 601, avgRating: 4.43 }\n    ]\n  }\n]"
+  },
+  {
+    "id": 39,
+    "group": "User Analysis",
+    "title": "Distribution of ratings per user",
+    "purpose": "$bucket groups users into activity bands (20–49, 50–99, … ratings).",
+    "shell": "db.ratings.aggregate([\n  { $group: { _id: \"$userId\", ratings: { $sum: 1 } } },\n  {\n    $bucket: {\n      groupBy: \"$ratings\",\n      boundaries: [20, 50, 100, 200, 500, 1000, 3000],\n      default: \"3000+\",\n      output: { users: { $sum: 1 } }\n    }\n  }\n])",
+    "output": "[\n  { _id: 20, users: 225 },\n  { _id: 50, users: 137 },\n  { _id: 100, users: 114 },\n  { _id: 200, users: 90 },\n  { _id: 500, users: 32 },\n  { _id: 1000, users: 12 }\n]"
+  },
+  {
+    "id": 40,
+    "group": "User Analysis",
+    "title": "Favourite genres of a specific user (userId 1)",
+    "purpose": "Personal taste profile: which genres does user 1 rate most often and most highly?",
+    "shell": "db.ratings.aggregate([\n  { $match: { userId: 1 } },\n  {\n    $lookup: {\n      from: \"movies\",\n      localField: \"movieId\",\n      foreignField: \"movieId\",\n      as: \"movie\"\n    }\n  },\n  { $unwind: \"$movie\" },\n  { $unwind: \"$movie.genreList\" },\n  {\n    $group: {\n      _id: \"$movie.genreList\",\n      rated: { $sum: 1 },\n      avgRating: { $avg: \"$rating\" }\n    }\n  },\n  {\n    $project: { rated: 1, avgRating: { $round: [\"$avgRating\", 2] } }\n  },\n  { $sort: { rated: -1 } },\n  { $limit: 5 }\n])",
+    "output": "[\n  { _id: 'Action', rated: 90, avgRating: 4.32 },\n  { _id: 'Adventure', rated: 85, avgRating: 4.39 },\n  { _id: 'Comedy', rated: 83, avgRating: 4.28 },\n  { _id: 'Drama', rated: 68, avgRating: 4.53 },\n  { _id: 'Thriller', rated: 55, avgRating: 4.15 }\n]"
+  },
+  {
+    "id": 41,
+    "group": "User Analysis",
+    "title": "Number of ratings submitted per year",
+    "purpose": "$year on the ratedAt date field shows activity on the platform from 1996 to 2018 (.toArray() prints all 23 years instead of the first 20 cursor results).",
+    "shell": "db.ratings.aggregate([\n  {\n    $group: {\n      _id: { $year: \"$ratedAt\" },\n      ratings: { $sum: 1 },\n      avgRating: { $avg: \"$rating\" }\n    }\n  },\n  {\n    $project: { ratings: 1, avgRating: { $round: [\"$avgRating\", 2] } }\n  },\n  { $sort: { _id: 1 } }\n]).toArray()",
+    "output": "[\n  { _id: 1996, ratings: 6040, avgRating: 3.54 },\n  { _id: 1997, ratings: 1916, avgRating: 3.73 },\n  { _id: 1998, ratings: 507, avgRating: 3.44 },\n  { _id: 1999, ratings: 2439, avgRating: 3.77 },\n  { _id: 2000, ratings: 10061, avgRating: 3.39 },\n  { _id: 2001, ratings: 3922, avgRating: 3.51 },\n  { _id: 2002, ratings: 3478, avgRating: 3.61 },\n  { _id: 2003, ratings: 4014, avgRating: 3.5 },\n  { _id: 2004, ratings: 3279, avgRating: 3.51 },\n  { _id: 2005, ratings: 5813, avgRating: 3.43 },\n  { _id: 2006, ratings: 4059, avgRating: 3.49 },\n  { _id: 2007, ratings: 7114, avgRating: 3.31 },\n  { _id: 2008, ratings: 4351, avgRating: 3.66 },\n  { _id: 2009, ratings: 4158, avgRating: 3.39 },\n  { _id: 2010, ratings: 2301, avgRating: 3.46 },\n  { _id: 2011, ratings: 1690, avgRating: 3.78 },\n  { _id: 2012, ratings: 4656, avgRating: 3.64 },\n  { _id: 2013, ratings: 1664, avgRating: 3.88 },\n  { _id: 2014, ratings: 1439, avgRating: 3.51 },\n  { _id: 2015, ratings: 6616, avgRating: 3.51 },\n  { _id: 2016, ratings: 6703, avgRating: 3.69 },\n  { _id: 2017, ratings: 8198, avgRating: 3.35 },\n  { _id: 2018, ratings: 6418, avgRating: 3.39 }\n]"
+  },
+  {
+    "id": 42,
+    "group": "User Analysis",
+    "title": "Ratings by day of the week",
+    "purpose": "$dayOfWeek (1 = Sunday … 7 = Saturday) reveals when users are most active.",
+    "shell": "db.ratings.aggregate([\n  {\n    $group: { _id: { $dayOfWeek: \"$ratedAt\" }, ratings: { $sum: 1 } }\n  },\n  { $sort: { _id: 1 } },\n  {\n    $project: {\n      _id: 0,\n      day: {\n        $arrayElemAt: [\n          [\"\", \"Sun\", \"Mon\", \"Tue\", \"Wed\", \"Thu\", \"Fri\", \"Sat\"],\n          \"$_id\"\n        ]\n      },\n      ratings: 1\n    }\n  }\n])",
+    "output": "[\n  { ratings: 16209, day: 'Sun' },\n  { ratings: 17583, day: 'Mon' },\n  { ratings: 16411, day: 'Tue' },\n  { ratings: 14014, day: 'Wed' },\n  { ratings: 10706, day: 'Thu' },\n  { ratings: 14455, day: 'Fri' },\n  { ratings: 11458, day: 'Sat' }\n]"
+  },
+  {
+    "id": 43,
+    "group": "User Analysis",
+    "title": "First and last rating date of the most active user",
+    "purpose": "$min/$max on dates give the active lifespan of user 414.",
+    "shell": "db.ratings.aggregate([\n  { $match: { userId: 414 } },\n  {\n    $group: {\n      _id: \"$userId\",\n      firstRating: { $min: \"$ratedAt\" },\n      lastRating: { $max: \"$ratedAt\" },\n      total: { $sum: 1 }\n    }\n  }\n])",
+    "output": "[\n  {\n    _id: 414,\n    firstRating: ISODate('2000-06-19T17:36:56.000Z'),\n    lastRating: ISODate('2018-06-02T22:21:12.000Z'),\n    total: 2698\n  }\n]"
+  },
+  {
+    "id": 44,
+    "group": "Tag Analysis",
+    "title": "Most frequently used tags",
+    "purpose": "$toLower normalises case before counting so 'Funny' and 'funny' merge.",
+    "shell": "db.tags.aggregate([\n  { $group: { _id: { $toLower: \"$tag\" }, count: { $sum: 1 } } },\n  { $sort: { count: -1 } },\n  { $limit: 15 }\n])",
+    "output": "[\n  { _id: 'in netflix queue', count: 131 },\n  { _id: 'atmospheric', count: 41 },\n  { _id: 'surreal', count: 24 },\n  { _id: 'thought-provoking', count: 24 },\n  { _id: 'funny', count: 24 },\n  { _id: 'superhero', count: 24 },\n  { _id: 'disney', count: 23 },\n  { _id: 'sci-fi', count: 23 },\n  { _id: 'religion', count: 22 },\n  { _id: 'quirky', count: 22 },\n  { _id: 'psychology', count: 21 },\n  { _id: 'dark comedy', count: 21 },\n  { _id: 'suspense', count: 21 },\n  { _id: 'visually appealing', count: 20 },\n  { _id: 'twist ending', count: 20 }\n]"
+  },
+  {
+    "id": 45,
+    "group": "Tag Analysis",
+    "title": "All tags applied to Pulp Fiction",
+    "purpose": "$addToSet collects the unique tags for movieId 296; $slice shows the first 15 of them.",
+    "shell": "db.tags.aggregate([\n  { $match: { movieId: 296 } },\n  {\n    $group: {\n      _id: \"$movieId\",\n      tags: { $addToSet: \"$tag\" },\n      taggers: { $addToSet: \"$userId\" }\n    }\n  },\n  {\n    $lookup: {\n      from: \"movies\",\n      localField: \"_id\",\n      foreignField: \"movieId\",\n      as: \"movie\"\n    }\n  },\n  {\n    $project: {\n      _id: 0,\n      title: { $first: \"$movie.title\" },\n      totalTags: { $size: \"$tags\" },\n      taggerCount: { $size: \"$taggers\" },\n      sampleTags: { $slice: [\"$tags\", 15] }\n    }\n  }\n])",
+    "output": "[\n  {\n    title: 'Pulp Fiction (1994)',\n    totalTags: 173,\n    taggerCount: 4,\n    sampleTags: [\n      \"Palme d'Or\",\n      'r:strong bloody violence',\n      'stylish',\n      'mobster',\n      'characters',\n      'drugs',\n      'great acting',\n      'rape',\n      'film noir',\n      'r:graphic sexuality',\n      'masterpiece',\n      'coke',\n      'nonlinear',\n      'dark humor',\n      'exciting'\n    ]\n  }\n]"
+  },
+  {
+    "id": 46,
+    "group": "Tag Analysis",
+    "title": "Most tagged movies",
+    "purpose": "Which films attract the most free-text annotation from users?",
+    "shell": "db.tags.aggregate([\n  { $group: { _id: \"$movieId\", tagCount: { $sum: 1 } } },\n  { $sort: { tagCount: -1 } },\n  { $limit: 10 },\n  {\n    $lookup: {\n      from: \"movies\",\n      localField: \"_id\",\n      foreignField: \"movieId\",\n      as: \"movie\"\n    }\n  },\n  { $unwind: \"$movie\" },\n  { $project: { _id: 0, title: \"$movie.title\", tagCount: 1 } }\n])",
+    "output": "[\n  { tagCount: 181, title: 'Pulp Fiction (1994)' },\n  { tagCount: 54, title: 'Fight Club (1999)' },\n  { tagCount: 41, title: '2001: A Space Odyssey (1968)' },\n  {\n    tagCount: 35,\n    title: 'Léon: The Professional (a.k.a. The Professional) (Léon) (1994)'\n  },\n  {\n    tagCount: 34,\n    title: 'Eternal Sunshine of the Spotless Mind (2004)'\n  },\n  { tagCount: 32, title: 'The Big Lebowski (1998)' },\n  { tagCount: 29, title: 'Donnie Darko (2001)' },\n  { tagCount: 26, title: 'Inception (2010)' },\n  { tagCount: 26, title: 'Star Wars: Episode IV - A New Hope (1977)' },\n  { tagCount: 19, title: 'Suicide Squad (2016)' }\n]"
+  },
+  {
+    "id": 47,
+    "group": "Tag Analysis",
+    "title": "Average rating of movies tagged 'funny'",
+    "purpose": "Combines tags and ratings through two $lookup stages to test whether comedies tagged funny are rated well.",
+    "shell": "db.tags.aggregate([\n  { $match: { tag: { $regex: \"^funny$\", $options: \"i\" } } },\n  { $group: { _id: \"$movieId\" } },\n  {\n    $lookup: {\n      from: \"ratings\",\n      localField: \"_id\",\n      foreignField: \"movieId\",\n      as: \"r\"\n    }\n  },\n  {\n    $lookup: {\n      from: \"movies\",\n      localField: \"_id\",\n      foreignField: \"movieId\",\n      as: \"movie\"\n    }\n  },\n  {\n    $project: {\n      _id: 0,\n      title: { $first: \"$movie.title\" },\n      ratings: { $size: \"$r\" },\n      avgRating: { $round: [{ $avg: \"$r.rating\" }, 2] }\n    }\n  },\n  { $sort: { ratings: -1 } },\n  { $limit: 10 }\n])",
+    "output": "[\n  { title: 'Pulp Fiction (1994)', ratings: 307, avgRating: 4.2 },\n  { title: 'The Big Lebowski (1998)', ratings: 106, avgRating: 3.92 },\n  { title: 'Clueless (1995)', ratings: 104, avgRating: 3.29 },\n  { title: 'Toy Story 2 (1999)', ratings: 97, avgRating: 3.86 },\n  { title: 'The Hangover (2009)', ratings: 76, avgRating: 3.63 },\n  { title: 'Django Unchained (2012)', ratings: 71, avgRating: 3.94 },\n  {\n    title: 'Guardians of the Galaxy (2014)',\n    ratings: 59,\n    avgRating: 4.05\n  },\n  { title: 'Zombieland (2009)', ratings: 53, avgRating: 3.88 },\n  {\n    title: '(500) Days of Summer (2009)',\n    ratings: 42,\n    avgRating: 3.67\n  },\n  {\n    title: 'Home Alone 2: Lost in New York (1992)',\n    ratings: 31,\n    avgRating: 2.52\n  }\n]"
+  },
+  {
+    "id": 48,
+    "group": "Tag Analysis",
+    "title": "Most active taggers",
+    "purpose": "Users grouped by number of tag applications; a handful of users generate most tags.",
+    "shell": "db.tags.aggregate([\n  {\n    $group: {\n      _id: \"$userId\",\n      tags: { $sum: 1 },\n      movies: { $addToSet: \"$movieId\" }\n    }\n  },\n  {\n    $project: {\n      userId: \"$_id\",\n      _id: 0,\n      tags: 1,\n      moviesTagged: { $size: \"$movies\" }\n    }\n  },\n  { $sort: { tags: -1 } },\n  { $limit: 5 }\n])",
+    "output": "[\n  { tags: 1507, userId: 474, moviesTagged: 1235 },\n  { tags: 432, userId: 567, moviesTagged: 109 },\n  { tags: 370, userId: 62, moviesTagged: 69 },\n  { tags: 323, userId: 599, moviesTagged: 5 },\n  { tags: 280, userId: 477, moviesTagged: 68 }\n]"
+  },
+  {
+    "id": 49,
+    "group": "Recommendation Queries",
+    "title": "Content-based: movies most similar to Toy Story by genre overlap",
+    "purpose": "$setIntersection counts shared genres with Toy Story's genreList; ties are broken by average rating (min 20 ratings).",
+    "shell": "db.movies.aggregate([\n  { $match: { movieId: { $ne: 1 } } },\n  {\n    $addFields: {\n      sharedGenres: {\n        $size: {\n          $setIntersection: [\n            \"$genreList\",\n            [\n              \"Adventure\",\n              \"Animation\",\n              \"Children\",\n              \"Comedy\",\n              \"Fantasy\"\n            ]\n          ]\n        }\n      }\n    }\n  },\n  { $match: { sharedGenres: { $gte: 4 } } },\n  {\n    $lookup: {\n      from: \"ratings\",\n      localField: \"movieId\",\n      foreignField: \"movieId\",\n      as: \"r\"\n    }\n  },\n  {\n    $addFields: {\n      ratingCount: { $size: \"$r\" },\n      avgRating: { $avg: \"$r.rating\" }\n    }\n  },\n  { $match: { ratingCount: { $gte: 20 } } },\n  { $sort: { sharedGenres: -1, avgRating: -1 } },\n  { $limit: 10 },\n  {\n    $project: {\n      _id: 0,\n      title: 1,\n      sharedGenres: 1,\n      ratingCount: 1,\n      avgRating: { $round: [\"$avgRating\", 2] }\n    }\n  }\n])",
+    "output": "[\n  {\n    title: 'Toy Story 3 (2010)',\n    sharedGenres: 5,\n    ratingCount: 55,\n    avgRating: 4.11\n  },\n  {\n    title: 'Monsters, Inc. (2001)',\n    sharedGenres: 5,\n    ratingCount: 132,\n    avgRating: 3.87\n  },\n  {\n    title: 'The Lego Movie (2014)',\n    sharedGenres: 5,\n    ratingCount: 31,\n    avgRating: 3.87\n  },\n  {\n    title: 'Shrek (2001)',\n    sharedGenres: 5,\n    ratingCount: 170,\n    avgRating: 3.87\n  },\n  {\n    title: 'Toy Story 2 (1999)',\n    sharedGenres: 5,\n    ratingCount: 97,\n    avgRating: 3.86\n  },\n  {\n    title: 'Inside Out (2015)',\n    sharedGenres: 5,\n    ratingCount: 43,\n    avgRating: 3.81\n  },\n  {\n    title: \"The Emperor's New Groove (2000)\",\n    sharedGenres: 5,\n    ratingCount: 37,\n    avgRating: 3.72\n  },\n  {\n    title: 'Who Framed Roger Rabbit? (1988)',\n    sharedGenres: 5,\n    ratingCount: 97,\n    avgRating: 3.57\n  },\n  {\n    title: 'Antz (1998)',\n    sharedGenres: 5,\n    ratingCount: 45,\n    avgRating: 3.24\n  },\n  {\n    title: 'Shrek the Third (2007)',\n    sharedGenres: 5,\n    ratingCount: 21,\n    avgRating: 3.02\n  }\n]"
+  },
+  {
+    "id": 50,
+    "group": "Recommendation Queries",
+    "title": "Collaborative: 'users who liked The Matrix also liked…'",
+    "purpose": "Find users who gave The Matrix (movieId 2571) ≥ 4.5, then rank the other movies those users also rated ≥ 4.5.",
+    "shell": "db.ratings.aggregate([\n  { $match: { movieId: 2571, rating: { $gte: 4.5 } } },\n  { $group: { _id: null, fans: { $addToSet: \"$userId\" } } },\n  {\n    $lookup: {\n      from: \"ratings\",\n      let: { fans: \"$fans\" },\n      pipeline: [\n        {\n          $match: {\n            $expr: {\n              $and: [\n                { $in: [\"$userId\", \"$$fans\"] },\n                { $gte: [\"$rating\", 4.5] },\n                { $ne: [\"$movieId\", 2571] }\n              ]\n            }\n          }\n        },\n        { $group: { _id: \"$movieId\", fanCount: { $sum: 1 } } },\n        { $sort: { fanCount: -1 } },\n        { $limit: 10 }\n      ],\n      as: \"alsoLiked\"\n    }\n  },\n  { $unwind: \"$alsoLiked\" },\n  {\n    $lookup: {\n      from: \"movies\",\n      localField: \"alsoLiked._id\",\n      foreignField: \"movieId\",\n      as: \"movie\"\n    }\n  },\n  {\n    $project: {\n      _id: 0,\n      title: { $first: \"$movie.title\" },\n      fansWhoLikedIt: \"$alsoLiked.fanCount\",\n      totalMatrixFans: { $size: \"$fans\" }\n    }\n  }\n])",
+    "output": "[\n  {\n    title: 'Fight Club (1999)',\n    fansWhoLikedIt: 75,\n    totalMatrixFans: 150\n  },\n  {\n    title: 'The Shawshank Redemption (1994)',\n    fansWhoLikedIt: 75,\n    totalMatrixFans: 150\n  },\n  {\n    title: 'Pulp Fiction (1994)',\n    fansWhoLikedIt: 61,\n    totalMatrixFans: 150\n  },\n  {\n    title: 'Star Wars: Episode IV - A New Hope (1977)',\n    fansWhoLikedIt: 60,\n    totalMatrixFans: 150\n  },\n  {\n    title: 'Star Wars: Episode V - The Empire Strikes Back (1980)',\n    fansWhoLikedIt: 59,\n    totalMatrixFans: 150\n  },\n  {\n    title: 'Forrest Gump (1994)',\n    fansWhoLikedIt: 57,\n    totalMatrixFans: 150\n  },\n  {\n    title: 'The Lord of the Rings: The Fellowship of the Ring (2001)',\n    fansWhoLikedIt: 56,\n    totalMatrixFans: 150\n  },\n  {\n    title: 'The Silence of the Lambs (1991)',\n    fansWhoLikedIt: 51,\n    totalMatrixFans: 150\n  },\n  {\n    title: 'Star Wars: Episode VI - Return of the Jedi (1983)',\n    fansWhoLikedIt: 50,\n    totalMatrixFans: 150\n  },\n  {\n    title: 'Saving Private Ryan (1998)',\n    fansWhoLikedIt: 49,\n    totalMatrixFans: 150\n  }\n]"
+  },
+  {
+    "id": 51,
+    "group": "Recommendation Queries",
+    "title": "Personalised recommendations for user 1",
+    "purpose": "Top weighted-rated Action/Adventure movies (user 1's favourite genres) that user 1 has NOT rated yet.",
+    "shell": "db.movies.aggregate([\n  { $match: { genreList: { $all: [\"Action\", \"Adventure\"] } } },\n  {\n    $lookup: {\n      from: \"ratings\",\n      localField: \"movieId\",\n      foreignField: \"movieId\",\n      as: \"r\"\n    }\n  },\n  { $match: { \"r.userId\": { $ne: 1 } } },\n  {\n    $addFields: {\n      ratingCount: { $size: \"$r\" },\n      avgRating: { $avg: \"$r.rating\" }\n    }\n  },\n  { $match: { ratingCount: { $gte: 50 } } },\n  { $sort: { avgRating: -1 } },\n  { $limit: 10 },\n  {\n    $project: {\n      _id: 0,\n      title: 1,\n      year: 1,\n      ratingCount: 1,\n      avgRating: { $round: [\"$avgRating\", 2] }\n    }\n  }\n])",
+    "output": "[\n  {\n    title: 'North by Northwest (1959)',\n    year: 1959,\n    ratingCount: 57,\n    avgRating: 4.18\n  },\n  {\n    title: 'City of God (Cidade de Deus) (2002)',\n    year: 2002,\n    ratingCount: 75,\n    avgRating: 4.15\n  },\n  {\n    title: 'The Good, the Bad and the Ugly (Buono, il brutto, il cattivo, Il) (1966)',\n    year: 1966,\n    ratingCount: 72,\n    avgRating: 4.15\n  },\n  {\n    title: 'The Lord of the Rings: The Return of the King (2003)',\n    year: 2003,\n    ratingCount: 185,\n    avgRating: 4.12\n  },\n  {\n    title: 'Guardians of the Galaxy (2014)',\n    year: 2014,\n    ratingCount: 59,\n    avgRating: 4.05\n  },\n  {\n    title: 'Army of Darkness (1993)',\n    year: 1993,\n    ratingCount: 51,\n    avgRating: 4.04\n  },\n  {\n    title: 'The Dark Knight Rises (2012)',\n    year: 2012,\n    ratingCount: 76,\n    avgRating: 3.99\n  },\n  {\n    title: 'Aliens (1986)',\n    year: 1986,\n    ratingCount: 126,\n    avgRating: 3.96\n  },\n  {\n    title: 'Children of Men (2006)',\n    year: 2006,\n    ratingCount: 64,\n    avgRating: 3.95\n  },\n  {\n    title: 'Casino Royale (2006)',\n    year: 2006,\n    ratingCount: 81,\n    avgRating: 3.94\n  }\n]"
+  },
+  {
+    "id": 52,
+    "group": "Recommendation Queries",
+    "title": "Hidden gems: highly rated but rarely watched",
+    "purpose": "Movies averaging ≥ 4.3 with between 10 and 30 ratings – quality titles that never reached a mass audience.",
+    "shell": "db.ratings.aggregate([\n  {\n    $group: {\n      _id: \"$movieId\",\n      ratingCount: { $sum: 1 },\n      avgRating: { $avg: \"$rating\" }\n    }\n  },\n  {\n    $match: { ratingCount: { $gte: 10, $lte: 30 }, avgRating: { $gte: 4.3 } }\n  },\n  { $sort: { avgRating: -1 } },\n  { $limit: 10 },\n  {\n    $lookup: {\n      from: \"movies\",\n      localField: \"_id\",\n      foreignField: \"movieId\",\n      as: \"movie\"\n    }\n  },\n  { $unwind: \"$movie\" },\n  {\n    $project: {\n      _id: 0,\n      title: \"$movie.title\",\n      genres: \"$movie.genres\",\n      ratingCount: 1,\n      avgRating: { $round: [\"$avgRating\", 2] }\n    }\n  }\n])",
+    "output": "[\n  {\n    ratingCount: 11,\n    title: 'Secrets & Lies (1996)',\n    genres: 'Drama',\n    avgRating: 4.59\n  },\n  {\n    ratingCount: 11,\n    title: \"Guess Who's Coming to Dinner (1967)\",\n    genres: 'Drama',\n    avgRating: 4.55\n  },\n  {\n    ratingCount: 12,\n    title: 'Paths of Glory (1957)',\n    genres: 'Drama|War',\n    avgRating: 4.54\n  },\n  {\n    ratingCount: 20,\n    title: 'A Streetcar Named Desire (1951)',\n    genres: 'Drama',\n    avgRating: 4.47\n  },\n  {\n    ratingCount: 12,\n    title: 'The Celebration (Festen) (1998)',\n    genres: 'Drama',\n    avgRating: 4.46\n  },\n  {\n    ratingCount: 15,\n    title: 'Ran (1985)',\n    genres: 'Drama|War',\n    avgRating: 4.43\n  },\n  {\n    ratingCount: 14,\n    title: 'His Girl Friday (1940)',\n    genres: 'Comedy|Romance',\n    avgRating: 4.39\n  },\n  {\n    ratingCount: 10,\n    title: 'All Quiet on the Western Front (1930)',\n    genres: 'Action|Drama|War',\n    avgRating: 4.35\n  },\n  {\n    ratingCount: 27,\n    title: 'Sunset Blvd. (a.k.a. Sunset Boulevard) (1950)',\n    genres: 'Drama|Film-Noir|Romance',\n    avgRating: 4.33\n  },\n  {\n    ratingCount: 18,\n    title: 'The Hustler (1961)',\n    genres: 'Drama',\n    avgRating: 4.33\n  }\n]"
+  },
+  {
+    "id": 53,
+    "group": "Recommendation Queries",
+    "title": "Materialise per-movie statistics with $merge",
+    "purpose": "Pre-computes rating count, average and std-dev for every movie into a movie_stats collection so the dashboard can read it without re-aggregating 100k ratings.",
+    "shell": "db.ratings.aggregate([\n  {\n    $group: {\n      _id: \"$movieId\",\n      ratingCount: { $sum: 1 },\n      avgRating: { $avg: \"$rating\" },\n      stdDev: { $stdDevPop: \"$rating\" }\n    }\n  },\n  { $merge: { into: \"movie_stats\", whenMatched: \"replace\" } }\n]);\ndb.movie_stats.find().sort({ ratingCount: -1 }).limit(5)",
+    "output": "[\n  {\n    _id: 356,\n    ratingCount: 329,\n    avgRating: 4.164133738601824,\n    stdDev: 0.829979269004478\n  },\n  {\n    _id: 318,\n    ratingCount: 317,\n    avgRating: 4.429022082018927,\n    stdDev: 0.7118931016352933\n  },\n  {\n    _id: 296,\n    ratingCount: 307,\n    avgRating: 4.197068403908795,\n    stdDev: 0.9504453980131069\n  },\n  {\n    _id: 593,\n    ratingCount: 279,\n    avgRating: 4.161290322580645,\n    stdDev: 0.8524515258270362\n  },\n  {\n    _id: 2571,\n    ratingCount: 278,\n    avgRating: 4.192446043165468,\n    stdDev: 0.9734869031917084\n  }\n]"
+  },
+  {
+    "id": 54,
+    "group": "Recommendation Queries",
+    "title": "Dashboard summary in a single $facet query",
+    "purpose": "One round-trip returns several independent aggregations – the pattern used by the CineMatch dashboard's overview page.",
+    "shell": "db.ratings.aggregate([\n  {\n    $facet: {\n      overall: [\n        {\n          $group: {\n            _id: null,\n            ratings: { $sum: 1 },\n            avg: { $avg: \"$rating\" }\n          }\n        },\n        {\n          $project: { _id: 0, ratings: 1, avg: { $round: [\"$avg\", 2] } }\n        }\n      ],\n      topMovies: [\n        { $group: { _id: \"$movieId\", n: { $sum: 1 } } },\n        { $sort: { n: -1 } },\n        { $limit: 3 }\n      ],\n      topUsers: [\n        { $group: { _id: \"$userId\", n: { $sum: 1 } } },\n        { $sort: { n: -1 } },\n        { $limit: 3 }\n      ],\n      byStar: [\n        { $group: { _id: \"$rating\", n: { $sum: 1 } } },\n        { $sort: { _id: -1 } }\n      ]\n    }\n  }\n])",
+    "output": "[\n  {\n    overall: [ { ratings: 100836, avg: 3.5 } ],\n    topMovies: [\n      { _id: 356, n: 329 },\n      { _id: 318, n: 317 },\n      { _id: 296, n: 307 }\n    ],\n    topUsers: [\n      { _id: 414, n: 2698 },\n      { _id: 599, n: 2478 },\n      { _id: 474, n: 2108 }\n    ],\n    byStar: [\n      { _id: 5, n: 13211 },\n      { _id: 4.5, n: 8551 },\n      { _id: 4, n: 26818 },\n      { _id: 3.5, n: 13136 },\n      { _id: 3, n: 20047 },\n      { _id: 2.5, n: 5550 },\n      { _id: 2, n: 7551 },\n      { _id: 1.5, n: 1791 },\n      { _id: 1, n: 2811 },\n      { _id: 0.5, n: 1370 }\n    ]\n  }\n]"
+  },
+  {
+    "id": 55,
+    "group": "CRUD & Index Performance",
+    "title": "Insert a new movie document",
+    "purpose": "Demonstrates schema flexibility – the new document carries an extra 'source' field none of the imported documents have.",
+    "shell": "db.movies.insertOne({\n  movieId: 999999,\n  title: \"CineMatch Demo Film (2026)\",\n  genres: \"Documentary|Sci-Fi\",\n  genreList: [\"Documentary\", \"Sci-Fi\"],\n  year: 2026,\n  source: \"manual insert\"\n})",
+    "output": "{\n  acknowledged: true,\n  insertedId: ObjectId('6aa6fc1fec7f6481069a8992')\n}"
+  },
+  {
+    "id": 56,
+    "group": "CRUD & Index Performance",
+    "title": "Update the inserted document ($set and $push)",
+    "purpose": "Adds a genre to the array and a new field in one atomic update.",
+    "shell": "db.movies.updateOne(\n  { movieId: 999999 },\n  { $push: { genreList: \"Drama\" }, $set: { genres: \"Documentary|Sci-Fi|Drama\", verified: true } }\n);\ndb.movies.findOne({ movieId: 999999 })",
+    "output": "{\n  _id: ObjectId('6aa6fc1fec7f6481069a8992'),\n  movieId: 999999,\n  title: 'CineMatch Demo Film (2026)',\n  genres: 'Documentary|Sci-Fi|Drama',\n  genreList: [ 'Documentary', 'Sci-Fi', 'Drama' ],\n  year: 2026,\n  source: 'manual insert',\n  verified: true\n}"
+  },
+  {
+    "id": 57,
+    "group": "CRUD & Index Performance",
+    "title": "Delete the demo document",
+    "purpose": "Clean-up so the catalogue returns to its original 9,742 movies.",
+    "shell": "db.movies.deleteOne({ movieId: 999999 });\ndb.movies.countDocuments()",
+    "output": "9742"
+  },
+  {
+    "id": 58,
+    "group": "CRUD & Index Performance",
+    "title": "Explain plan: index scan vs collection scan",
+    "purpose": "explain() shows the movieId query on ratings uses the IXSCAN created earlier and examines only the matching keys instead of all 100,836 documents.",
+    "shell": "const plan = db.ratings.find({ movieId: 296 }).explain(\"executionStats\");\n({\n  stage: plan.queryPlanner.winningPlan.stage,\n  inputStage: plan.queryPlanner.winningPlan.inputStage?.stage,\n  indexName: plan.queryPlanner.winningPlan.inputStage?.indexName,\n  docsReturned: plan.executionStats.nReturned,\n  docsExamined: plan.executionStats.totalDocsExamined,\n  keysExamined: plan.executionStats.totalKeysExamined,\n  executionTimeMs: plan.executionStats.executionTimeMillis\n})",
+    "output": "{\n  stage: 'FETCH',\n  inputStage: 'IXSCAN',\n  indexName: 'movieId_1',\n  docsReturned: 307,\n  docsExamined: 307,\n  keysExamined: 307,\n  executionTimeMs: 0\n}"
+  }
+]

@@ -1,0 +1,20 @@
+{
+  "name": "cinematch",
+  "version": "1.0.0",
+  "description": "CineMatch - MongoDB movie analytics case study",
+  "main": "server/index.js",
+  "scripts": {
+    "import": "node import/import.js",
+    "queries": "node queries/run-all.js",
+    "start": "node server/index.js",
+    "build": "cd frontend && npm run build",
+    "dev": "cd frontend && npm run dev"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "csv-parse": "^7.0.2",
+    "express": "^5.2.1",
+    "mongodb": "^7.6.0"
+  }
+}
