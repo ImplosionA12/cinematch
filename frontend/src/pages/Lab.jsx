@@ -72,6 +72,7 @@ export default function Lab() {
   if (loading || !list) return <Loader />;
   const rows = res?.result;
   const ran = res !== null || sh !== null;
+  const hasRows = !!res && !res.error && res.result !== undefined;
   const writeKinds = cur && (cur.kind === "raw");
 
   return (
@@ -109,9 +110,9 @@ export default function Lab() {
                 </div>
                 {ran && <div className="seg">
                   {sh && sh.output != null && <button className={view === "shell" ? "on" : ""} onClick={() => setView("shell")}>mongosh</button>}
-                  {cur.chart && cur.chart.type !== "kpi" && <button className={view === "chart" ? "on" : ""} onClick={() => setView("chart")}>Chart</button>}
-                  <button className={view === "table" ? "on" : ""} onClick={() => setView("table")}>Table</button>
-                  <button className={view === "json" ? "on" : ""} onClick={() => setView("json")}>JSON</button>
+                  {hasRows && cur.chart && cur.chart.type !== "kpi" && <button className={view === "chart" ? "on" : ""} onClick={() => setView("chart")}>Chart</button>}
+                  {hasRows && <button className={view === "table" ? "on" : ""} onClick={() => setView("table")}>Table</button>}
+                  {hasRows && <button className={view === "json" ? "on" : ""} onClick={() => setView("json")}>JSON</button>}
                 </div>}
               </div>
               {running ? <Loader /> : !ran ? <p className="muted" style={{ fontSize: 13.5 }}>Press <b>▶ Run query</b> to execute this in mongosh against the live cinematch database.</p> : view === "shell" && sh?.output != null ? <pre className="out">{sh.output}</pre> : res?.error ? <pre className="out" style={{ color: "var(--rose)" }}>{res.error}</pre> : rows === undefined || rows === null ? (sh?.error ? <pre className="out" style={{ color: "var(--rose)" }}>{sh.error}</pre> : null) : (
