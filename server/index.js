@@ -58,6 +58,28 @@ app.get("/api/queries/:id/run", async (req, res) => {
   }
 });
 
+// Runs the catalogue's mongosh text in a real mongosh process (fixed scripts only, never client input).
+const { execFile } = require("child_process");
+const fs = require("fs");
+const localMongosh = path.join(__dirname, "..", "node_modules", ".bin", "mongosh");
+const MONGOSH = process.env.MONGOSH_BIN || (process.platform !== "win32" && fs.existsSync(localMongosh) ? localMongosh : "mongosh");
+
+const scrub = (t) => String(t).split(URI).join("<MONGO_URI>").replace(/mongodb(\+srv)?:\/\/[^\s"']+/g, "<MONGO_URI>");
+
+app.get("/api/queries/:id/shell", (req, res) => {
+  const q = Q.find((x) => x.id === Number(req.params.id));
+  if (!q) return res.status(404).json({ error: "not found" });
+  const t0 = Date.now();
+  const script = `db = db.getSiblingDB("cinematch");\n${toShell(q)}`;
+  execFile(MONGOSH, [URI, "--quiet", "--norc", "--eval", script],
+    { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 60000, env: { ...process.env, NO_COLOR: "1" } },
+    (err, stdout, stderr) => {
+      const ms = Date.now() - t0;
+      if (err && !stdout) return res.status(500).json({ error: "mongosh unavailable or failed: " + scrub((stderr || err.message).split("\n")[0]), ms });
+      res.json({ id: q.id, ms, output: scrub(stdout + (err ? "\n" + stderr : "")).replace(/\r\n/g, "\n").trimEnd() });
+    });
+});
+
 /* ── Overview ────────────────────────────────────────────────────── */
 app.get("/api/overview", async (req, res) => {
   const data = await cached("overview", async () => {

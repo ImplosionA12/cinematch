@@ -53,21 +53,25 @@ export default function Lab() {
   const [res, setRes] = useState(null);
   const [running, setRunning] = useState(false);
   const [view, setView] = useState("table");
+  const [sh, setSh] = useState(null);
   const [filter, setFilter] = useState("");
   const cur = useMemo(() => list?.find((q) => q.id === Number(id)) || list?.[0], [list, id]);
   const groups = useMemo(() => { const g = {}; (list || []).forEach((q) => (g[q.group] ||= []).push(q)); return g; }, [list]);
 
   const run = async (q) => {
     if (!q) return;
-    setRunning(true); setRes(null);
-    const r = await fetch(`/api/queries/${q.id}/run`).then((r) => r.json());
-    setRes(r); setRunning(false);
-    setView(q.chart && q.chart.type !== "kpi" ? "chart" : "table");
+    setRunning(true); setRes(null); setSh(null);
+    const shellP = fetch(`/api/queries/${q.id}/shell`).then((r) => r.json()).catch((e) => ({ error: String(e) }));
+    const rowsP = q.kind === "raw" ? Promise.resolve(null) : fetch(`/api/queries/${q.id}/run`).then((r) => r.json()).catch((e) => ({ error: String(e) }));
+    const [s, r] = await Promise.all([shellP, rowsP]);
+    setSh(s); setRes(r); setRunning(false);
+    setView(s && s.output != null ? "shell" : q.chart && q.chart.type !== "kpi" ? "chart" : "table");
   };
-  useEffect(() => { if (cur) run(cur); }, [cur?.id]);
+  useEffect(() => { setRes(null); setSh(null); setRunning(false); }, [cur?.id]);
 
   if (loading || !list) return <Loader />;
   const rows = res?.result;
+  const ran = res !== null || sh !== null;
   const writeKinds = cur && (cur.kind === "raw");
 
   return (
@@ -100,16 +104,17 @@ export default function Lab() {
             <div className="panel">
               <div className="row spread" style={{ marginBottom: 12 }}>
                 <div className="row">
-                  <button className="btn sm" disabled={running} onClick={() => run(cur)}>{running ? "Running…" : "▶ Run again"}</button>
-                  {res && <span className="muted" style={{ fontSize: 13 }}>{res.ms} ms · {Array.isArray(rows) ? `${rows.length} document${rows.length === 1 ? "" : "s"}` : typeof rows === "object" ? "1 document" : "scalar"}{writeKinds && " · idempotent write"}</span>}
+                  <button className="btn sm" disabled={running} onClick={() => run(cur)}>{running ? "Running…" : ran ? "▶ Run again" : "▶ Run query"}</button>
+                  {(res || sh) && <span className="muted" style={{ fontSize: 13 }}>{sh?.ms ?? res?.ms} ms · {Array.isArray(rows) ? `${rows.length} document${rows.length === 1 ? "" : "s"}` : typeof rows === "object" ? "1 document" : "scalar"}{writeKinds && " · idempotent write"}</span>}
                 </div>
-                <div className="seg">
+                {ran && <div className="seg">
+                  {sh && sh.output != null && <button className={view === "shell" ? "on" : ""} onClick={() => setView("shell")}>mongosh</button>}
                   {cur.chart && cur.chart.type !== "kpi" && <button className={view === "chart" ? "on" : ""} onClick={() => setView("chart")}>Chart</button>}
                   <button className={view === "table" ? "on" : ""} onClick={() => setView("table")}>Table</button>
                   <button className={view === "json" ? "on" : ""} onClick={() => setView("json")}>JSON</button>
-                </div>
+                </div>}
               </div>
-              {running ? <Loader /> : res?.error ? <pre className="out" style={{ color: "var(--rose)" }}>{res.error}</pre> : rows === undefined ? null : (
+              {running ? <Loader /> : !ran ? <p className="muted" style={{ fontSize: 13.5 }}>Press <b>▶ Run query</b> to execute this in mongosh against the live cinematch database.</p> : view === "shell" && sh?.output != null ? <pre className="out">{sh.output}</pre> : res?.error ? <pre className="out" style={{ color: "var(--rose)" }}>{res.error}</pre> : rows === undefined || rows === null ? (sh?.error ? <pre className="out" style={{ color: "var(--rose)" }}>{sh.error}</pre> : null) : (
                 view === "chart" ? <Chart chart={cur.chart} rows={rows} /> :
                 view === "json" ? <pre className="out">{JSON.stringify(rows, null, 2)}</pre> :
                 typeof rows !== "object" || rows === null ? <div className="kpi"><div className="v">{typeof rows === "number" ? fmt(rows) : String(rows)}</div></div> :
